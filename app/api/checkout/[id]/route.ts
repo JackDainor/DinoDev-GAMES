@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { s2t, safeError } from '@/lib/shop2topup';
 import { sql } from '@/lib/db';
+import { notifyTelegram } from '@/lib/notify';
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -50,6 +51,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json({ error: `Estado actual: ${row.status}` }, { status: 400 });
       }
       await db`UPDATE payment_orders SET status = 'awaiting_confirmation', updated_at = now() WHERE id = ${id}::uuid`;
+      const base =
+        process.env.ADMIN_PUBLIC_URL ||
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
+      const adminUrl = base ? `${base.replace(/\/$/, '')}/admin` : '/admin';
+      await notifyTelegram(
+        `🟢 DinoDev: cliente dice que PAGÓ\n` +
+        `${row.game_name} · ${row.item_name}\n` +
+        `Jugador: ${row.player_name} (${row.player_id})\n` +
+        `Monto: ${row.local_currency} ${row.local_amount} (${row.pay_country})\n` +
+        `Orden: ${id}\n` +
+        `Admin: ${adminUrl}`
+      );
       return NextResponse.json({
         success: true,
         order: { ...row, status: 'awaiting_confirmation' },
