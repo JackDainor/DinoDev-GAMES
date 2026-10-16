@@ -325,7 +325,7 @@ export default function Home() {
               onClick={() => setGameSlug(g.slug)}
             >
               <span className="game-cover">
-                <img src={g.cover || `/${g.slug}.svg`} alt={g.name} />
+                <img src={g.cover || `/${g.slug}.jpg`} alt={g.name} />
               </span>
               <strong>{g.short}</strong>
               <span>{g.name}</span>
