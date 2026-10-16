@@ -18,7 +18,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 2,
     regionPriority: [/latam/i, /brazil|brasil/i, /direct\s*topup$/i],
     currencyLabel: 'Diamantes',
-    cover: '/freefire.svg',
+    cover: '/freefire.jpg',
   },
   {
     slug: 'pubg',
@@ -27,7 +27,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 1,
     regionPriority: [/direct\s*topup$/i, /uc/i],
     currencyLabel: 'UC',
-    cover: '/pubg.svg',
+    cover: '/pubg.jpg',
   },
   {
     slug: 'mlbb',
@@ -36,7 +36,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 264,
     regionPriority: [/brazil|brasil/i, /global|worldwide/i, /direct\s*topup$/i],
     currencyLabel: 'Diamantes',
-    cover: '/mlbb.svg',
+    cover: '/mlbb.jpg',
   },
   {
     slug: 'bloodstrike',
@@ -45,7 +45,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 241,
     regionPriority: [/direct\s*topup$/i, /mena/i],
     currencyLabel: 'Gold',
-    cover: '/bloodstrike.svg',
+    cover: '/bloodstrike.jpg',
   },
 ];
 
