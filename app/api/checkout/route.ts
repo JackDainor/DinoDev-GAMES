@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { s2t, safeError } from '@/lib/shop2topup';
 import { sql } from '@/lib/db';
 import { getPayCountry, localAmount, PAYMENT_TTL_MS, PAY_COUNTRIES } from '@/lib/money';
+import { notifyTelegram } from '@/lib/notify';
 
 function listOf(body: any): any[] {
   if (Array.isArray(body?.data)) return body.data;
@@ -90,6 +91,14 @@ export async function POST(req: NextRequest) {
 
     const country = getPayCountry(payCountry);
 
+    await notifyTelegram(
+      `🟡 Nueva orden QR (esperando pago)\n` +
+      `${gameName} · ${itemName}\n` +
+      `Jugador: ${playerName} (${playerId})\n` +
+      `Monto: ${local.currency} ${local.amount} (${payCountry})\n` +
+      `Orden: ${id}`
+    );
+
     return NextResponse.json({
       success: true,
       order: {
@@ -110,6 +119,7 @@ export async function POST(req: NextRequest) {
         payCountryName: country.name,
         method: local.method,
         qrUrl: local.qrUrl || null,
+        pixKey: local.pixKey || null,
         rate: local.rate,
       },
     });
