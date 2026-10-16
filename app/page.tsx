@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-type Game = { slug: string; name: string; short: string; currencyLabel: string };
+type Game = { slug: string; name: string; short: string; currencyLabel: string; cover?: string };
 type Region = { id: number; name: string; region: string };
 type Product = {
   id: number;
@@ -34,22 +34,33 @@ type PayOrder = {
   payCountryName: string;
   method: string;
   qrUrl?: string | null;
+  pixKey?: string | null;
   rate: number;
 };
 
+type HistOrder = {
+  id: string;
+  status: string;
+  game_name: string;
+  item_name: string;
+  player_id: string;
+  player_name: string;
+  local_amount: string | number;
+  local_currency: string;
+  pay_country?: string;
+  created_at?: string;
+  expires_at?: string;
+};
+
 const GAMES_FALLBACK: Game[] = [
-  { slug: 'freefire', name: 'Free Fire', short: 'FF', currencyLabel: 'Diamantes' },
-  { slug: 'pubg', name: 'PUBG Mobile', short: 'PUBG', currencyLabel: 'UC' },
-  { slug: 'mlbb', name: 'Mobile Legends', short: 'MLBB', currencyLabel: 'Diamantes' },
-  { slug: 'bloodstrike', name: 'Blood Strike', short: 'BS', currencyLabel: 'Gold' },
+  { slug: 'freefire', name: 'Free Fire', short: 'FF', currencyLabel: 'Diamantes', cover: '/freefire.svg' },
+  { slug: 'pubg', name: 'PUBG Mobile', short: 'PUBG', currencyLabel: 'UC', cover: '/pubg.svg' },
+  { slug: 'mlbb', name: 'Mobile Legends', short: 'MLBB', currencyLabel: 'Diamantes', cover: '/mlbb.svg' },
+  { slug: 'bloodstrike', name: 'Blood Strike', short: 'BS', currencyLabel: 'Gold', cover: '/bloodstrike.svg' },
 ];
 
-const GAME_EMOJI: Record<string, string> = {
-  freefire: '🔥',
-  pubg: '🎯',
-  mlbb: '⚔️',
-  bloodstrike: '🩸',
-};
+const WA_NUMBER = '5511966019490'; // +55 11 96601-9490
+const WA_TEXT = encodeURIComponent('Hola DinoDev GAMES, necesito ayuda con una recarga.');
 
 export default function Home() {
   const [games] = useState<Game[]>(GAMES_FALLBACK);
@@ -63,6 +74,8 @@ export default function Home() {
   const [playerId, setPlayerId] = useState('');
   const [player, setPlayer] = useState<Player | null>(null);
   const [payOrder, setPayOrder] = useState<PayOrder | null>(null);
+  const [histOrders, setHistOrders] = useState<HistOrder[]>([]);
+  const [histLoading, setHistLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -168,7 +181,9 @@ export default function Home() {
       const d = await r.json();
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo crear la orden de pago.');
       setPayOrder(d.order);
+      if (d.order?.id) rememberOrderId(d.order.id);
       setNotice('Orden creada. Tienes 1 hora para pagar con el QR.');
+      loadHistory();
     } catch (e: any) {
       setError(e.message || 'Error al iniciar el pago.');
     } finally {
@@ -196,6 +211,47 @@ export default function Home() {
       setBusy(false);
     }
   }
+
+
+  function rememberOrderId(id: string) {
+    try {
+      const raw = localStorage.getItem('dinodev_order_ids') || '[]';
+      const arr = JSON.parse(raw) as string[];
+      const next = [id, ...arr.filter((x) => x !== id)].slice(0, 30);
+      localStorage.setItem('dinodev_order_ids', JSON.stringify(next));
+    } catch { /* ignore */ }
+  }
+
+  async function loadHistory() {
+    setHistLoading(true);
+    try {
+      let ids: string[] = [];
+      try {
+        ids = JSON.parse(localStorage.getItem('dinodev_order_ids') || '[]');
+      } catch { ids = []; }
+      const body: any = { ids };
+      if (/^\d{5,20}$/.test(playerId)) body.playerId = playerId;
+      if (!ids.length && !body.playerId) {
+        setHistOrders([]);
+        return;
+      }
+      const r = await fetch('/api/my-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (r.ok && d.success) setHistOrders(d.orders || []);
+    } catch { /* ignore */ }
+    finally { setHistLoading(false); }
+  }
+
+  useEffect(() => {
+    loadHistory();
+    const t = setInterval(loadHistory, 20000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerId]);
 
   return (
     <main>
@@ -268,7 +324,9 @@ export default function Home() {
               className={`game-tab ${gameSlug === g.slug ? 'active' : ''}`}
               onClick={() => setGameSlug(g.slug)}
             >
-              <span className="game-emoji">{GAME_EMOJI[g.slug] || '🎮'}</span>
+              <span className="game-cover">
+                <img src={g.cover || `/${g.slug}.svg`} alt={g.name} />
+              </span>
               <strong>{g.short}</strong>
               <span>{g.name}</span>
             </button>
@@ -327,7 +385,7 @@ export default function Home() {
                 className={`product ${selected === p.id ? 'selected' : ''}`}
               >
                 <span className="product-icon">
-                  {p.image ? <img src={p.image} alt="" /> : <span>{GAME_EMOJI[gameSlug] || '💎'}</span>}
+                  {p.image ? <img src={p.image} alt="" /> : <img src={game.cover || `/${gameSlug}.svg`} alt="" className="product-cover-fallback" />}
                 </span>
                 <span className="product-name">{p.name}</span>
                 <span className="product-region">🌐 {p.region || '—'}</span>
@@ -450,6 +508,12 @@ export default function Home() {
                 </div>
               )}
             </div>
+            {payOrder.pixKey && (
+              <div className="pix-key-box">
+                <small>Chave Pix (aleatória)</small>
+                <strong>{payOrder.pixKey}</strong>
+              </div>
+            )}
             {payOrder.status === 'pending_payment' && remaining !== 'Expirado' && (
               <button className="btn primary" type="button" disabled={busy} onClick={claimPaid}>
                 Ya realicé el pago
@@ -462,6 +526,38 @@ export default function Home() {
           </div>
         )}
       </section>
+
+
+        <div className="panel" id="historial">
+          <div className="eyebrow">05 / MIS PEDIDOS</div>
+          <h3>Historial en este dispositivo</h3>
+          <p className="muted">
+            Se guarda en tu navegador. Si ya validaste un ID, también buscamos por ese ID. Actualiza la página sin miedo.
+          </p>
+          <button className="btn" type="button" disabled={histLoading} onClick={() => loadHistory()}>
+            {histLoading ? 'Actualizando…' : 'Actualizar historial'}
+          </button>
+          {histOrders.length === 0 ? (
+            <p className="muted" style={{ marginTop: '0.75rem' }}>Aún no hay pedidos guardados aquí.</p>
+          ) : (
+            <div className="hist-list">
+              {histOrders.map((o) => (
+                <div key={o.id} className="hist-item">
+                  <div>
+                    <span className={`st st-${o.status}`}>{o.status}</span>
+                    <strong>
+                      {o.game_name} · {o.item_name}
+                    </strong>
+                    <small>
+                      {o.player_name} ({o.player_id}) · {o.local_currency} {Number(o.local_amount).toFixed(2)}
+                    </small>
+                    <small className="mono">{o.id}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
       <section className="how wrap" id="como">
         <div className="eyebrow">CÓMO FUNCIONA</div>
@@ -478,6 +574,21 @@ export default function Home() {
         <span>DinoDev GAMES · Recargas digitales</span>
         <span>Precios locales según tasa configurada · Entrega vía proveedor</span>
       </footer>
+      <a
+        className="wa-float"
+        href={`https://wa.me/${WA_NUMBER}?text=${WA_TEXT}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="WhatsApp soporte"
+      >
+        <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">
+          <path
+            fill="#fff"
+            d="M16.1 3C9.5 3 4.1 8.3 4.1 14.8c0 2.6.8 5 2.3 7L4 28.5l6.9-2.2c1.9 1 4 1.6 6.2 1.6 6.6 0 12-5.3 12-11.9S22.7 3 16.1 3zm0 21.6c-2 0-3.9-.5-5.6-1.5l-.4-.2-4.1 1.3 1.3-4-.3-.4c-1.1-1.7-1.7-3.7-1.7-5.8 0-5.5 4.5-10 10.1-10s10.1 4.5 10.1 10-4.5 10-10.1 10zm5.8-7.5c-.3-.2-1.8-.9-2.1-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-.9 1.1-.2.2-.3.2-.6 0-.3-.2-1.2-.4-2.3-1.4-.8-.7-1.4-1.6-1.6-1.9-.2-.3 0-.4.1-.6.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2 0-.4 0-.5 0-.2-.7-1.6-1-2.2-.2-.5-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.2 3c.1.2 2 3.1 4.9 4.3 1.7.7 2.4.8 3.3.7.5-.1 1.8-.7 2-1.4.2-.7.2-1.3.2-1.4 0-.2-.3-.3-.6-.4z"
+          />
+        </svg>
+      </a>
     </main>
   );
 }
+
