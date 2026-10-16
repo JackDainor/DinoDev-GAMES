@@ -4,9 +4,10 @@ export type GameDef = {
   name: string;
   short: string;
   bigCategoryId: number;
-  /** Prefer these category name patterns (order = priority). */
   regionPriority: RegExp[];
-  currencyLabel: string; // what the in-game currency is called
+  currencyLabel: string;
+  /** File in /public — e.g. freefire.jpg */
+  cover: string;
 };
 
 export const GAMES: GameDef[] = [
@@ -17,6 +18,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 2,
     regionPriority: [/latam/i, /brazil|brasil/i, /direct\s*topup$/i],
     currencyLabel: 'Diamantes',
+    cover: '/freefire.svg',
   },
   {
     slug: 'pubg',
@@ -25,6 +27,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 1,
     regionPriority: [/direct\s*topup$/i, /uc/i],
     currencyLabel: 'UC',
+    cover: '/pubg.svg',
   },
   {
     slug: 'mlbb',
@@ -33,6 +36,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 264,
     regionPriority: [/brazil|brasil/i, /global|worldwide/i, /direct\s*topup$/i],
     currencyLabel: 'Diamantes',
+    cover: '/mlbb.svg',
   },
   {
     slug: 'bloodstrike',
@@ -41,6 +45,7 @@ export const GAMES: GameDef[] = [
     bigCategoryId: 241,
     regionPriority: [/direct\s*topup$/i, /mena/i],
     currencyLabel: 'Gold',
+    cover: '/bloodstrike.svg',
   },
 ];
 
@@ -48,7 +53,6 @@ export function gameBySlug(slug: string) {
   return GAMES.find((g) => g.slug === slug) || GAMES[0];
 }
 
-/** Human-readable region from Shop2TopUp category metadata. */
 export function regionLabel(cat: {
   name?: string;
   region_ids?: Array<{ name?: string } | string>;

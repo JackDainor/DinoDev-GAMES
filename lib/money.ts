@@ -46,6 +46,7 @@ export function localAmount(usd: number, countryCode: string) {
     name: c.name,
     method: c.method,
     qrUrl: process.env[c.envQr] || '',
+    pixKey: process.env.PIX_KEY_BR || '',
   };
 }
 
