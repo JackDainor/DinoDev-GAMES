@@ -53,10 +53,10 @@ type HistOrder = {
 };
 
 const GAMES_FALLBACK: Game[] = [
-  { slug: 'freefire', name: 'Free Fire', short: 'FF', currencyLabel: 'Diamantes', cover: '/freefire.svg' },
-  { slug: 'pubg', name: 'PUBG Mobile', short: 'PUBG', currencyLabel: 'UC', cover: '/pubg.svg' },
-  { slug: 'mlbb', name: 'Mobile Legends', short: 'MLBB', currencyLabel: 'Diamantes', cover: '/mlbb.svg' },
-  { slug: 'bloodstrike', name: 'Blood Strike', short: 'BS', currencyLabel: 'Gold', cover: '/bloodstrike.svg' },
+  { slug: 'freefire', name: 'Free Fire', short: 'FF', currencyLabel: 'Diamantes', cover: '/freefire.jpg' },
+  { slug: 'pubg', name: 'PUBG Mobile', short: 'PUBG', currencyLabel: 'UC', cover: '/pubg.jpg' },
+  { slug: 'mlbb', name: 'Mobile Legends', short: 'MLBB', currencyLabel: 'Diamantes', cover: '/mlbb.jpg' },
+  { slug: 'bloodstrike', name: 'Blood Strike', short: 'BS', currencyLabel: 'Gold', cover: '/bloodstrike.jpg' },
 ];
 
 const WA_NUMBER = '5511966019490'; // +55 11 96601-9490
