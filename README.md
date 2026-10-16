@@ -37,3 +37,8 @@ Cada paquete muestra la región de la categoría. Si el ID del jugador es de otr
 
 ## Seguridad
 Nunca subas la API key al repo. Si se filtró, rotala en Shop2TopUp.
+
+## Panel admin
+- URL: `https://tu-dominio.vercel.app/admin`
+- Contraseña: la misma que `OPERATOR_SECRET` en Vercel
+- Ahí ves órdenes pendientes y el botón **Aceptar y enviar diamantes**
