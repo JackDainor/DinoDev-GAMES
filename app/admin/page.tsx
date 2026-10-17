@@ -24,7 +24,9 @@ const STATUS_LABEL: Record<string, string> = {
   paid: 'Pagado',
   processing: 'Enviando…',
   completed: 'Completado',
-  expired: 'Expirado / cancelada',
+  expired: 'Expirado (sin pago)',
+  cancelled: 'Cancelada',
+  not_paid: 'No pagó',
   failed: 'Falló el envío',
 };
 
@@ -95,6 +97,31 @@ export default function AdminPage() {
     setSaved(false);
     setSecret('');
     setOrders([]);
+  }
+
+  async function setOrderStatus(id: string, action: string, label: string) {
+    if (!confirm(`${label}\n¿Confirmas?`)) return;
+    setBusyId(id);
+    setError('');
+    setNotice('');
+    try {
+      const r = await fetch('/api/admin/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-secret': secret.trim(),
+        },
+        body: JSON.stringify({ id, action }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo actualizar.');
+      setNotice(`Orden ${id.slice(0, 8)}… → ${d.status}`);
+      await load(secret);
+    } catch (e: any) {
+      setError(e.message || 'Error');
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function fulfill(id: string) {
@@ -217,14 +244,34 @@ export default function AdminPage() {
                   </p>
                 </div>
                 {(o.status === 'awaiting_confirmation' || o.status === 'pending_payment') && (
-                  <button
-                    type="button"
-                    className="admin-btn primary"
-                    disabled={busyId === o.id}
-                    onClick={() => fulfill(o.id)}
-                  >
-                    {busyId === o.id ? 'Enviando…' : 'Aceptar y enviar diamantes'}
-                  </button>
+                  <div className="admin-order-btns">
+                    {o.status === 'awaiting_confirmation' && (
+                      <button
+                        type="button"
+                        className="admin-btn primary"
+                        disabled={busyId === o.id}
+                        onClick={() => fulfill(o.id)}
+                      >
+                        {busyId === o.id ? 'Enviando…' : 'Aceptar y enviar diamantes'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="admin-btn"
+                      disabled={busyId === o.id}
+                      onClick={() => setOrderStatus(o.id, 'mark_not_paid', 'Marcar: el cliente NO pagó')}
+                    >
+                      No pagó
+                    </button>
+                    <button
+                      type="button"
+                      className="admin-btn ghost"
+                      disabled={busyId === o.id}
+                      onClick={() => setOrderStatus(o.id, 'mark_cancelled', 'Cancelar esta orden')}
+                    >
+                      Cancelar orden
+                    </button>
+                  </div>
                 )}
               </article>
             ))}
