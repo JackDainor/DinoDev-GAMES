@@ -48,6 +48,7 @@ type HistOrder = {
   local_amount: string | number;
   local_currency: string;
   pay_country?: string;
+  qr_url?: string | null;
   created_at?: string;
   expires_at?: string;
 };
@@ -62,11 +63,13 @@ const GAMES_FALLBACK: Game[] = [
 const WA_NUMBER = '5511966019490'; // +55 11 96601-9490
 const STATUS_USER: Record<string, string> = {
   pending_payment: 'Esperando pago',
-  awaiting_confirmation: 'Pago en revisión',
+  awaiting_confirmation: 'Verificando pago…',
   paid: 'Pagado',
   processing: 'Enviando diamantes…',
   completed: 'Completado ✓',
-  expired: 'Expirado / cancelado',
+  expired: 'Pago no realizado',
+  cancelled: 'Orden cancelada',
+  not_paid: 'Pago no realizado',
   failed: 'Falló el envío',
 };
 const WA_TEXT = encodeURIComponent('Hola DinoDev GAMES, necesito ayuda con una recarga.');
@@ -124,10 +127,13 @@ export default function Home() {
   }, [gameSlug, market, loadCatalog]);
 
   useEffect(() => {
-    if (!payOrder?.expiresAt) return;
+    const needTick =
+      !!payOrder?.expiresAt ||
+      histOrders.some((o) => o.status === 'pending_payment' && o.expires_at);
+    if (!needTick) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [payOrder?.expiresAt]);
+  }, [payOrder?.expiresAt, histOrders]);
 
   const remaining = useMemo(() => {
     if (!payOrder?.expiresAt) return '';
@@ -200,25 +206,50 @@ export default function Home() {
     }
   }
 
-  async function claimPaid() {
-    if (!payOrder) return;
+  async function claimPaid(orderId: string) {
+    if (!orderId) return;
     setBusy(true);
     setError('');
+    setNotice('');
     try {
-      const r = await fetch(`/api/checkout/${payOrder.id}`, {
+      const r = await fetch(`/api/checkout/${orderId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim_paid' }),
       });
       const d = await r.json();
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo registrar el pago.');
-      setPayOrder({ ...payOrder, status: 'awaiting_confirmation' });
-      setNotice(d.message || 'Pago registrado. Confirmaremos y enviaremos la recarga.');
+      if (payOrder?.id === orderId) {
+        setPayOrder({ ...payOrder, status: 'awaiting_confirmation' });
+      }
+      setNotice(d.message || 'Pago registrado. Estamos verificando…');
+      await loadHistory();
     } catch (e: any) {
       setError(e.message || 'Error al registrar el pago.');
     } finally {
       setBusy(false);
     }
+  }
+
+  function downloadQr(url: string, orderId: string) {
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `QR-DinoDev-${orderId.slice(0, 8)}.png`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function histRemaining(expiresAt?: string) {
+    if (!expiresAt) return '';
+    const ms = new Date(expiresAt).getTime() - now;
+    if (ms <= 0) return 'Expirado';
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    return `${m}:${String(s).padStart(2, '0')}`;
   }
 
 
@@ -523,15 +554,23 @@ export default function Home() {
                 <strong>{payOrder.pixKey}</strong>
               </div>
             )}
-            {payOrder.status === 'pending_payment' && remaining !== 'Expirado' && (
-              <button className="btn primary" type="button" disabled={busy} onClick={claimPaid}>
-                Ya realicé el pago
+            {payOrder.qrUrl && (
+              <button
+                className="btn"
+                type="button"
+                style={{ marginTop: '0.5rem' }}
+                onClick={() => downloadQr(payOrder.qrUrl!, payOrder.id)}
+              >
+                Descargar QR
               </button>
             )}
+            <p className="muted" style={{ marginTop: '0.75rem' }}>
+              Cuando pagues, ve a <strong>Mis pedidos</strong> abajo y pulsa <strong>Ya pagué</strong> en esta orden.
+            </p>
             {payOrder.status === 'awaiting_confirmation' && (
-              <div className="alert success">Pago reportado. Al confirmar el QR enviamos la recarga.</div>
+              <div className="alert success">Pago en verificación. Te avisaremos al completar la recarga.</div>
             )}
-            {remaining === 'Expirado' && <div className="alert error">Orden expirada. Genera una nueva.</div>}
+            {remaining === 'Expirado' && <div className="alert error">Tiempo de pago agotado (pago no realizado). Genera una nueva orden.</div>}
           </div>
         )}
       </section>
@@ -550,20 +589,55 @@ export default function Home() {
             <p className="muted" style={{ marginTop: '0.75rem' }}>Aún no hay pedidos guardados aquí.</p>
           ) : (
             <div className="hist-list">
-              {histOrders.map((o) => (
-                <div key={o.id} className="hist-item">
-                  <div>
-                    <span className={`st st-${o.status}`}>{STATUS_USER[o.status] || o.status}</span>
-                    <strong>
-                      {o.game_name} · {o.item_name}
-                    </strong>
-                    <small>
-                      {o.player_name} ({o.player_id}) · {o.local_currency} {Number(o.local_amount).toFixed(2)}
-                    </small>
-                    <small className="mono">{o.id}</small>
+              {histOrders.map((o) => {
+                const left = histRemaining(o.expires_at);
+                const canPay =
+                  o.status === 'pending_payment' && left !== 'Expirado';
+                return (
+                  <div key={o.id} className="hist-item">
+                    <div>
+                      <span className={`st st-${o.status}`}>{STATUS_USER[o.status] || o.status}</span>
+                      <strong>
+                        {o.game_name} · {o.item_name}
+                      </strong>
+                      <small>
+                        {o.player_name} ({o.player_id}) · {o.local_currency}{' '}
+                        {Number(o.local_amount).toFixed(2)}
+                      </small>
+                      {o.status === 'pending_payment' && o.expires_at && (
+                        <small>Tiempo para pagar: {left}</small>
+                      )}
+                      <small className="mono">{o.id}</small>
+                    </div>
+                    <div className="hist-actions">
+                      {o.qr_url && canPay && (
+                        <button type="button" className="btn" onClick={() => downloadQr(o.qr_url!, o.id)}>
+                          Descargar QR
+                        </button>
+                      )}
+                      {canPay && (
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={busy}
+                          onClick={() => claimPaid(o.id)}
+                        >
+                          Ya pagué
+                        </button>
+                      )}
+                      {o.status === 'awaiting_confirmation' && (
+                        <span className="hist-hint">Verificando tu pago…</span>
+                      )}
+                      {o.status === 'completed' && (
+                        <span className="hist-hint ok">Recarga completada</span>
+                      )}
+                      {(o.status === 'expired' || o.status === 'not_paid' || o.status === 'cancelled') && (
+                        <span className="hist-hint bad">Pago no realizado / cancelada</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
