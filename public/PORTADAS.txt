@@ -1,0 +1,18 @@
+Portadas de juegos (carpeta public/)
+====================================
+Tamaño recomendado: 512 x 512 px (cuadrada)
+También vale: 600x600 o 800x800
+Formato: JPG o PNG (mejor JPG ~80-150 KB)
+Nombres (reemplaza los .svg de ejemplo):
+
+  freefire.jpg
+  pubg.jpg
+  mlbb.jpg
+  bloodstrike.jpg
+
+Luego en lib/games.ts cambia:
+  cover: '/freefire.jpg'
+  etc.
+
+Logo:
+  logo.png  (ya está; 512x512 o similar, circular se ve bien)
