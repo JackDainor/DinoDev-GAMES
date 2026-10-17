@@ -24,7 +24,8 @@ const STATUS_LABEL: Record<string, string> = {
   paid: 'Pagado',
   processing: 'Enviando…',
   completed: 'Completado',
-  expired: 'Expirado',
+  expired: 'Expirado / cancelada',
+  failed: 'Falló el envío',
 };
 
 export default function AdminPage() {
@@ -35,6 +36,7 @@ export default function AdminPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<{ balance: string | null; currency: string; note?: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -59,6 +61,7 @@ export default function AdminPage() {
       const d = await r.json();
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudieron cargar las órdenes.');
       setOrders(d.orders || []);
+      if (d.wallet) setWallet(d.wallet);
       setNotice(`Actualizado · ${d.orders?.length || 0} órdenes`);
     } catch (e: any) {
       setError(e.message || 'Error al cargar');
@@ -169,6 +172,15 @@ export default function AdminPage() {
         </div>
       </header>
 
+      {wallet && (
+        <div className="wallet-card">
+          <small>Saldo Shop2TopUp</small>
+          <strong>
+            {wallet.balance != null ? `${wallet.currency} ${wallet.balance}` : '—'}
+          </strong>
+          {wallet.note && <span className="wallet-note">{wallet.note}</span>}
+        </div>
+      )}
       {error && <div className="admin-banner err">{error}</div>}
       {notice && <div className="admin-banner ok">{notice}</div>}
 
