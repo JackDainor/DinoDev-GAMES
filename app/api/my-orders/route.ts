@@ -15,6 +15,13 @@ export async function POST(req: NextRequest) {
     }
 
     const db = sql();
+    try {
+      await db`
+        UPDATE payment_orders
+        SET status = 'expired', updated_at = now()
+        WHERE status = 'pending_payment' AND expires_at < now()
+      `;
+    } catch { /* table may not exist yet */ }
     let rows: any[] = [];
 
     if (ids.length) {
