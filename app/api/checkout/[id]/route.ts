@@ -90,16 +90,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           expected_unit_price: String(row.usd_price),
         }),
       });
-      const status = String(out.order?.status ?? out.status ?? 'pending');
+      const providerStatus = String(out.order?.status ?? out.status ?? '').toLowerCase();
+      const failed = /fail|error|cancel|reject/i.test(providerStatus);
+      const finalStatus = failed ? 'failed' : 'completed';
       await db`
         UPDATE payment_orders SET
-          status = ${status === 'completed' ? 'completed' : 'processing'},
+          status = ${finalStatus},
           provider_order_id = ${id},
           provider_response = ${JSON.stringify(out)}::jsonb,
           updated_at = now()
         WHERE id = ${id}::uuid
       `;
-      return NextResponse.json({ success: true, order: { ...row, status }, provider: out });
+      return NextResponse.json({ success: true, order: { ...row, status: finalStatus }, provider: out });
     }
 
     return NextResponse.json({ error: 'Acción no reconocida.' }, { status: 400 });
