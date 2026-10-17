@@ -435,9 +435,9 @@ export default function Home() {
                   </span>
                   <span className="choose">{selected === p.id ? '✓' : '+'}</span>
                 </span>
-                {p.priceUsd && (
+                {/*p.priceUsd && (
                   <span className="price-usd">≈ USD {p.priceUsd}</span>
-                )}
+                )*/}
               </button>
             ))}
           </div>
