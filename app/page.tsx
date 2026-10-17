@@ -60,6 +60,15 @@ const GAMES_FALLBACK: Game[] = [
 ];
 
 const WA_NUMBER = '5511966019490'; // +55 11 96601-9490
+const STATUS_USER: Record<string, string> = {
+  pending_payment: 'Esperando pago',
+  awaiting_confirmation: 'Pago en revisión',
+  paid: 'Pagado',
+  processing: 'Enviando diamantes…',
+  completed: 'Completado ✓',
+  expired: 'Expirado / cancelado',
+  failed: 'Falló el envío',
+};
 const WA_TEXT = encodeURIComponent('Hola DinoDev GAMES, necesito ayuda con una recarga.');
 
 export default function Home() {
@@ -385,7 +394,7 @@ export default function Home() {
                 className={`product ${selected === p.id ? 'selected' : ''}`}
               >
                 <span className="product-icon">
-                  {p.image ? <img src={p.image} alt="" /> : <img src={game.cover || `/${gameSlug}.svg`} alt="" className="product-cover-fallback" />}
+                  {p.image ? <img src={p.image} alt="" /> : <img src={game.cover || `/${gameSlug}.jpg`} alt="" className="product-cover-fallback" />}
                 </span>
                 <span className="product-name">{p.name}</span>
                 <span className="product-region">🌐 {p.region || '—'}</span>
@@ -395,9 +404,9 @@ export default function Home() {
                   </span>
                   <span className="choose">{selected === p.id ? '✓' : '+'}</span>
                 </span>
-                {/*p.priceUsd && (
+                {p.priceUsd && (
                   <span className="price-usd">≈ USD {p.priceUsd}</span>
-                )*/}
+                )}
               </button>
             ))}
           </div>
@@ -544,7 +553,7 @@ export default function Home() {
               {histOrders.map((o) => (
                 <div key={o.id} className="hist-item">
                   <div>
-                    <span className={`st st-${o.status}`}>{o.status}</span>
+                    <span className={`st st-${o.status}`}>{STATUS_USER[o.status] || o.status}</span>
                     <strong>
                       {o.game_name} · {o.item_name}
                     </strong>
