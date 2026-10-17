@@ -21,15 +21,17 @@ export async function POST(req: NextRequest) {
         SET status = 'expired', updated_at = now()
         WHERE status = 'pending_payment' AND expires_at < now()
       `;
-    } catch { /* table may not exist yet */ }
+    } catch {
+      /* table may not exist yet */
+    }
+
     let rows: any[] = [];
 
     if (ids.length) {
-      // Fetch by ids (neon: pass array for ANY)
       rows = await db`
         SELECT id, status, game_name, item_name, player_id, player_name,
                local_amount, local_currency, pay_country, region_label,
-               created_at, expires_at, updated_at
+               qr_url, created_at, expires_at, updated_at
         FROM payment_orders
         WHERE id = ANY(${ids}::uuid[])
         ORDER BY created_at DESC
@@ -41,7 +43,7 @@ export async function POST(req: NextRequest) {
       const byPlayer = await db`
         SELECT id, status, game_name, item_name, player_id, player_name,
                local_amount, local_currency, pay_country, region_label,
-               created_at, expires_at, updated_at
+               qr_url, created_at, expires_at, updated_at
         FROM payment_orders
         WHERE player_id = ${playerId}
         ORDER BY created_at DESC
@@ -69,6 +71,7 @@ export async function POST(req: NextRequest) {
         local_currency: r.local_currency,
         pay_country: r.pay_country,
         region_label: r.region_label,
+        qr_url: r.qr_url || null,
         created_at: r.created_at,
         expires_at: r.expires_at,
         updated_at: r.updated_at,
