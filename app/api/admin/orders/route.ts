@@ -10,37 +10,87 @@ function authed(req: NextRequest) {
   return h === secret || q === secret;
 }
 
+async function ensureTable(db: ReturnType<typeof sql>) {
+  await db`
+    CREATE TABLE IF NOT EXISTS payment_orders (
+      id uuid PRIMARY KEY,
+      status text NOT NULL,
+      game_slug text NOT NULL,
+      game_name text NOT NULL,
+      item_id integer NOT NULL,
+      item_name text NOT NULL,
+      category_id integer NOT NULL,
+      region_label text,
+      player_id text NOT NULL,
+      player_name text NOT NULL,
+      player_region text,
+      usd_price numeric NOT NULL,
+      local_currency text NOT NULL,
+      local_amount numeric NOT NULL,
+      pay_country text NOT NULL,
+      qr_url text,
+      expires_at timestamptz NOT NULL,
+      provider_order_id text,
+      provider_response jsonb,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+}
+
+/** Mark overdue pending_payment as expired */
+async function expireStale(db: ReturnType<typeof sql>) {
+  await db`
+    UPDATE payment_orders
+    SET status = 'expired', updated_at = now()
+    WHERE status = 'pending_payment' AND expires_at < now()
+  `;
+}
+
+async function fetchBalance() {
+  const paths = ['/account/balance', '/balance', '/wallet', '/account'];
+  for (const path of paths) {
+    try {
+      const b = await s2t(path);
+      const raw =
+        b?.balance ??
+        b?.available_balance ??
+        b?.wallet_balance ??
+        b?.data?.balance ??
+        b?.data?.available_balance ??
+        b?.amount ??
+        null;
+      if (raw != null && raw !== '') {
+        return {
+          balance: String(raw),
+          currency: String(b?.currency ?? b?.data?.currency ?? 'USD'),
+          source: path,
+        };
+      }
+      // whole object sometimes is the account
+      if (typeof b === 'object' && b) {
+        for (const k of Object.keys(b)) {
+          if (/balance/i.test(k) && b[k] != null) {
+            return { balance: String(b[k]), currency: 'USD', source: path + ':' + k };
+          }
+        }
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   try {
     if (!authed(req)) {
       return NextResponse.json({ error: 'No autorizado. Revisa la contraseña de admin.' }, { status: 401 });
     }
     const db = sql();
-    await db`
-      CREATE TABLE IF NOT EXISTS payment_orders (
-        id uuid PRIMARY KEY,
-        status text NOT NULL,
-        game_slug text NOT NULL,
-        game_name text NOT NULL,
-        item_id integer NOT NULL,
-        item_name text NOT NULL,
-        category_id integer NOT NULL,
-        region_label text,
-        player_id text NOT NULL,
-        player_name text NOT NULL,
-        player_region text,
-        usd_price numeric NOT NULL,
-        local_currency text NOT NULL,
-        local_amount numeric NOT NULL,
-        pay_country text NOT NULL,
-        qr_url text,
-        expires_at timestamptz NOT NULL,
-        provider_order_id text,
-        provider_response jsonb,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )
-    `;
+    await ensureTable(db);
+    await expireStale(db);
+
     const rows = await db`
       SELECT
         id, status, game_name, item_name, item_id, category_id, region_label,
@@ -50,7 +100,16 @@ export async function GET(req: NextRequest) {
       ORDER BY created_at DESC
       LIMIT 100
     `;
-    return NextResponse.json({ success: true, orders: rows });
+
+    const wallet = await fetchBalance();
+
+    return NextResponse.json({
+      success: true,
+      orders: rows,
+      wallet: wallet
+        ? { balance: wallet.balance, currency: wallet.currency }
+        : { balance: null, currency: 'USD', note: 'No se pudo leer el saldo (revisa API o endpoint).' },
+    });
   } catch (e) {
     const x = safeError(e);
     return NextResponse.json(x, { status: x.status || 500 });
@@ -71,6 +130,9 @@ export async function POST(req: NextRequest) {
     }
 
     const db = sql();
+    await ensureTable(db);
+    await expireStale(db);
+
     const rows = await db`SELECT * FROM payment_orders WHERE id = ${id}::uuid LIMIT 1`;
     const row = rows[0];
     if (!row) return NextResponse.json({ error: 'Orden no encontrada.' }, { status: 404 });
@@ -81,11 +143,20 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'confirm_and_fulfill') {
-      if (!['pending_payment', 'awaiting_confirmation', 'paid'].includes(row.status)) {
-        return NextResponse.json(
-          { error: `No se puede cumplir desde estado "${row.status}".` },
-          { status: 400 }
-        );
+      if (row.status === 'expired') {
+        return NextResponse.json({ error: 'Orden expirada / compra cancelada. El cliente debe crear una nueva.' }, { status: 410 });
+      }
+      if (row.status === 'completed') {
+        return NextResponse.json({ success: true, status: 'completed', message: 'Esta orden ya estaba completada.' });
+      }
+      if (!['pending_payment', 'awaiting_confirmation', 'paid', 'processing'].includes(row.status)) {
+        return NextResponse.json({ error: `No se puede cumplir desde estado "${row.status}".` }, { status: 400 });
+      }
+
+      // Si sigue pending_payment y ya pasó 1h → no enviar
+      if (row.status === 'pending_payment' && new Date(row.expires_at).getTime() < Date.now()) {
+        await db`UPDATE payment_orders SET status = 'expired', updated_at = now() WHERE id = ${id}::uuid`;
+        return NextResponse.json({ error: 'Tiempo de pago expirado. Compra cancelada.' }, { status: 410 });
       }
 
       const out = await s2t('/orders/create', {
@@ -99,8 +170,11 @@ export async function POST(req: NextRequest) {
         }),
       });
 
-      const status = String(out.order?.status ?? out.status ?? 'pending');
-      const finalStatus = status === 'completed' ? 'completed' : 'processing';
+      // Tras envío exitoso desde admin → siempre "completed" en nuestra BD
+      // (el proveedor puede reportar pending interno; para el cliente ya se despachó)
+      const providerStatus = String(out.order?.status ?? out.status ?? '').toLowerCase();
+      const failed = /fail|error|cancel|reject/i.test(providerStatus);
+      const finalStatus = failed ? 'failed' : 'completed';
 
       await db`
         UPDATE payment_orders SET
@@ -115,7 +189,10 @@ export async function POST(req: NextRequest) {
         success: true,
         status: finalStatus,
         provider: out,
-        message: 'Orden enviada a Shop2TopUp. Revisa el juego del jugador.',
+        message:
+          finalStatus === 'completed'
+            ? 'Diamantes enviados. Orden marcada como completada.'
+            : 'El proveedor reportó un problema. Revisa la respuesta.',
       });
     }
 
