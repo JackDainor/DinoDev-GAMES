@@ -48,36 +48,17 @@ async function expireStale(db: ReturnType<typeof sql>) {
 }
 
 async function fetchBalance() {
-  const paths = ['/account/balance', '/balance', '/wallet', '/account'];
-  for (const path of paths) {
-    try {
-      const b = await s2t(path);
-      const raw =
-        b?.balance ??
-        b?.available_balance ??
-        b?.wallet_balance ??
-        b?.data?.balance ??
-        b?.data?.available_balance ??
-        b?.amount ??
-        null;
-      if (raw != null && raw !== '') {
-        return {
-          balance: String(raw),
-          currency: String(b?.currency ?? b?.data?.currency ?? 'USD'),
-          source: path,
-        };
-      }
-      // whole object sometimes is the account
-      if (typeof b === 'object' && b) {
-        for (const k of Object.keys(b)) {
-          if (/balance/i.test(k) && b[k] != null) {
-            return { balance: String(b[k]), currency: 'USD', source: path + ':' + k };
-          }
-        }
-      }
-    } catch {
-      /* try next */
+  try {
+    const b = await s2t('/account');
+    // Docs: { success, account: { balance, currency, status } } — also tolerate flat fields
+    const acc = b?.account ?? b?.data?.account ?? b?.data ?? b;
+    const raw = acc?.balance ?? b?.balance ?? null;
+    const currency = String(acc?.currency ?? b?.currency ?? 'USD');
+    if (raw != null && raw !== '') {
+      return { balance: String(raw), currency, source: '/account' };
     }
+  } catch {
+    /* ignore */
   }
   return null;
 }
@@ -137,9 +118,12 @@ export async function POST(req: NextRequest) {
     const row = rows[0];
     if (!row) return NextResponse.json({ error: 'Orden no encontrada.' }, { status: 404 });
 
-    if (action === 'mark_expired') {
-      await db`UPDATE payment_orders SET status = 'expired', updated_at = now() WHERE id = ${id}::uuid`;
-      return NextResponse.json({ success: true, status: 'expired' });
+    if (action === 'mark_expired' || action === 'mark_cancelled' || action === 'mark_not_paid') {
+      const st = action === 'mark_not_paid' ? 'not_paid' : 'cancelled';
+      // expired kept for time-out; not_paid / cancelled for admin rejection
+      const final = action === 'mark_expired' ? 'expired' : st;
+      await db`UPDATE payment_orders SET status = ${final}, updated_at = now() WHERE id = ${id}::uuid`;
+      return NextResponse.json({ success: true, status: final });
     }
 
     if (action === 'confirm_and_fulfill') {
