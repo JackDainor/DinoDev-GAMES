@@ -58,6 +58,7 @@ const GAMES_FALLBACK: Game[] = [
   { slug: 'pubg', name: 'PUBG Mobile', short: 'PUBG', currencyLabel: 'UC', cover: '/pubg.jpg' },
   { slug: 'mlbb', name: 'Mobile Legends', short: 'MLBB', currencyLabel: 'Diamantes', cover: '/mlbb.jpg' },
   { slug: 'bloodstrike', name: 'Blood Strike', short: 'BS', currencyLabel: 'Gold', cover: '/bloodstrike.jpg' },
+  { slug: 'roblox', name: 'Roblox', short: 'RBX', currencyLabel: 'Robux', cover: '/roblox.jpg' },
 ];
 
 const WA_NUMBER = '5511966019490'; // +55 11 96601-9490
