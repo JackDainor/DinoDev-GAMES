@@ -47,6 +47,15 @@ export const GAMES: GameDef[] = [
     currencyLabel: 'Gold',
     cover: '/bloodstrike.jpg',
   },
+  {
+  slug: 'roblox',
+  name: 'Roblox',
+  short: 'RBX',
+  bigCategoryId: 1042, // ← el ID real de Shop2TopUp
+  regionPriority: [/global/i, /direct\s*topup$/i],
+  currencyLabel: 'Robux',
+  cover: '/roblox.jpg',
+},
 ];
 
 export function gameBySlug(slug: string) {
