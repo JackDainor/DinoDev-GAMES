@@ -58,7 +58,6 @@ const GAMES_FALLBACK: Game[] = [
   { slug: 'pubg', name: 'PUBG Mobile', short: 'PUBG', currencyLabel: 'UC', cover: '/pubg.jpg' },
   { slug: 'mlbb', name: 'Mobile Legends', short: 'MLBB', currencyLabel: 'Diamantes', cover: '/mlbb.jpg' },
   { slug: 'bloodstrike', name: 'Blood Strike', short: 'BS', currencyLabel: 'Gold', cover: '/bloodstrike.jpg' },
-  { slug: 'roblox', name: 'Roblox', short: 'RBX', currencyLabel: 'Robux', cover: '/roblox.jpg' },
 ];
 
 const WA_NUMBER = '5511966019490'; // +55 11 96601-9490
@@ -76,7 +75,31 @@ const STATUS_USER: Record<string, string> = {
 const WA_TEXT = encodeURIComponent('Hola DinoDev GAMES, necesito ayuda con una recarga.');
 
 export default function Home() {
-  const [games] = useState<Game[]>(GAMES_FALLBACK);
+  const [games, setGames] = useState<Game[]>(GAMES_FALLBACK);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/catalog?list=games');
+        const d = await r.json();
+        if (r.ok && Array.isArray(d.games) && d.games.length) {
+          setGames(
+            d.games.map((g: any) => ({
+              slug: g.slug,
+              name: g.name,
+              short: g.short || g.name?.slice(0, 3) || 'G',
+              currencyLabel: g.currencyLabel || 'Créditos',
+              cover: g.cover || `/${g.slug}.jpg`,
+            }))
+          );
+        }
+      } catch {
+        /* keep fallback */
+      }
+    })();
+  }, []);
+
+
   const [gameSlug, setGameSlug] = useState('freefire');
   const [market, setMarket] = useState<'BO' | 'BR'>('BO');
   const [regions, setRegions] = useState<Region[]>([]);
@@ -436,9 +459,9 @@ export default function Home() {
                   </span>
                   <span className="choose">{selected === p.id ? '✓' : '+'}</span>
                 </span>
-                {/*p.priceUsd && (
+                {p.priceUsd && (
                   <span className="price-usd">≈ USD {p.priceUsd}</span>
-                )*/}
+                )}
               </button>
             ))}
           </div>
