@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { s2t, safeError } from '@/lib/shop2topup';
-import { GAMES, gameBySlug, regionLabel } from '@/lib/games';
+import { GAMES, gameBySlug, regionLabel, type GameDef } from '@/lib/games';
 import { getPayCountry, getRate, localAmount } from '@/lib/money';
+import { getEnabledBigCategoryIds, slugify } from '@/lib/catalog-settings';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,6 +10,8 @@ function listOf(body: any): any[] {
   if (Array.isArray(body?.data)) return body.data;
   if (Array.isArray(body?.categories)) return body.categories;
   if (Array.isArray(body?.subcategories)) return body.subcategories;
+  if (Array.isArray(body?.items)) return body.items;
+  if (Array.isArray(body?.products)) return body.products;
   if (Array.isArray(body)) return body;
   return [];
 }
@@ -20,26 +23,80 @@ function scoreCategory(name: string, priority: RegExp[]) {
   return 0;
 }
 
+function gameFromBig(c: any): GameDef {
+  const known = GAMES.find((g) => g.bigCategoryId === Number(c.id));
+  if (known) return known;
+  const name = String(c.name || 'Producto');
+  return {
+    slug: slugify(name),
+    name,
+    short: name.slice(0, 4).toUpperCase(),
+    bigCategoryId: Number(c.id),
+    regionPriority: [/global|worldwide/i, /brazil|brasil/i, /direct\s*topup$/i],
+    currencyLabel: /gift|card|voucher|apple|google|steam|roblox|razer/i.test(name)
+      ? 'Crédito'
+      : 'Créditos',
+    cover: `/${slugify(name)}.jpg`,
+  };
+}
+
+async function resolveGamesList(): Promise<GameDef[]> {
+  const enabled = await getEnabledBigCategoryIds();
+  if (enabled === null) {
+    // never configured: default hardcoded games
+    return GAMES;
+  }
+  if (enabled.length === 0) {
+    return [];
+  }
+  try {
+    const body = await s2t('/catalog/big-categories?for_ui=true');
+    const all = listOf(body);
+    const allow = new Set(enabled);
+    return all.filter((c: any) => allow.has(Number(c.id))).map(gameFromBig);
+  } catch {
+    // fallback to known games that match enabled ids
+    return GAMES.filter((g) => enabled.includes(g.bigCategoryId));
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
     const gameSlug = sp.get('game') || 'freefire';
     const regionId = sp.get('regionId');
     const market = (sp.get('market') || 'BO').toUpperCase();
-    const game = gameBySlug(gameSlug);
     const pay = getPayCountry(market);
     const rate = getRate(market);
 
     if (sp.get('list') === 'games') {
+      const games = await resolveGamesList();
       return NextResponse.json({
         success: true,
-        games: GAMES.map((g) => ({
+        games: games.map((g) => ({
           slug: g.slug,
           name: g.name,
           short: g.short,
           currencyLabel: g.currencyLabel,
+          cover: g.cover,
+          bigCategoryId: g.bigCategoryId,
         })),
       });
+    }
+
+    const games = await resolveGamesList();
+    let game =
+      games.find((g) => g.slug === gameSlug) ||
+      GAMES.find((g) => g.slug === gameSlug) ||
+      games[0] ||
+      gameBySlug(gameSlug);
+
+    // If slug unknown but bigCategoryId passed
+    const bigParam = sp.get('bigCategoryId');
+    if (bigParam) {
+      const id = Number(bigParam);
+      const hit = games.find((g) => g.bigCategoryId === id);
+      if (hit) game = hit;
     }
 
     const all = await s2t(`/catalog/categories?bigCategoryId=${game.bigCategoryId}&for_ui=true`);
@@ -50,11 +107,10 @@ export async function GET(req: NextRequest) {
       categories = listOf(full).filter(
         (c: any) =>
           Number(c.big_category_id) === game.bigCategoryId ||
-          new RegExp(game.name.split(' ')[0], 'i').test(String(c.big_category_name || ''))
+          new RegExp(game.name.split(' ')[0], 'i').test(String(c.big_category_name || c.name || ''))
       );
     }
 
-    // Prefer region matching market: BO → LATAM, BR → Brazil
     const marketBoost = market === 'BR' ? [/brazil|brasil/i] : [/latam/i, /brazil|brasil/i];
 
     const regions = categories
@@ -95,11 +151,22 @@ export async function GET(req: NextRequest) {
         id: Number(p.item_id ?? p.id),
         name: String(p.name ?? p.item_name ?? 'Paquete'),
         description: String(p.description || ''),
-        productType: String(p.product_type || 'topup'),
+        productType: String(p.product_type || p.type || 'topup').toLowerCase(),
         image: p.image_url || p.image || null,
         listPrice: p.price != null ? String(p.price) : '',
       }))
-      .filter((p: any) => Number.isFinite(p.id) && p.id > 0 && p.productType === 'topup');
+      .filter((p: any) => {
+        if (!Number.isFinite(p.id) || p.id <= 0) return false;
+        const t = p.productType || 'topup';
+        return (
+          t === 'topup' ||
+          t === 'voucher' ||
+          t === 'gift' ||
+          t === 'giftcard' ||
+          t === 'gift_card' ||
+          t === ''
+        );
+      });
 
     const products = await Promise.all(
       raw.map(async (p: any) => {
