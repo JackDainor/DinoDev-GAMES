@@ -133,12 +133,19 @@ export async function GET(req: NextRequest) {
       })
     );
 
+    let requirements: any[] = [];
+    try {
+      const rd = await s2t(`/catalog/category/${chosen.id}/requirements`);
+      requirements = listOf(rd);
+    } catch { /* optional */ }
+
     return NextResponse.json({
       success: true,
       settings: { rateBo: settings.rateBo, rateBr: settings.rateBr, markupUsd: settings.markupUsd },
       category: { id: chosen.id, name: chosen.name, region: chosen.region },
       regions,
       products,
+      requirements,
     });
   } catch (e) {
     const x = safeError(e);
