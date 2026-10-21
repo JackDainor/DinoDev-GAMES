@@ -18,7 +18,9 @@ export async function GET(req: NextRequest) {
       SELECT id, status, game_name, item_name, player_id, player_name, region_label,
              cost_usd::text, price_usd::text, local_amount::text, local_currency,
              pay_method, pay_country, created_at, expires_at
-      FROM payment_orders ORDER BY created_at DESC LIMIT 100
+      FROM payment_orders
+      ORDER BY created_at DESC
+      LIMIT 100
     `;
     return NextResponse.json({ success: true, orders: rows });
   } catch (e) {
@@ -39,38 +41,59 @@ export async function POST(req: NextRequest) {
     const order = rows[0];
     if (!order) return NextResponse.json({ error: 'Orden no encontrada' }, { status: 404 });
 
-    if (action === 'cancel') {
-      await db`UPDATE payment_orders SET status = 'cancelled', updated_at = now() WHERE id = ${id}::uuid`;
-      return NextResponse.json({ success: true, status: 'cancelled' });
+    if (action === 'cancel' || action === 'not_paid') {
+      const st = action === 'not_paid' ? 'not_paid' : 'cancelled';
+      await db`UPDATE payment_orders SET status = ${st}, updated_at = now() WHERE id = ${id}::uuid`;
+      return NextResponse.json({ success: true, status: st });
+    }
+
+    if (action === 'claim_paid' || action === 'mark_paid') {
+      await db`UPDATE payment_orders SET status = 'awaiting_confirmation', updated_at = now() WHERE id = ${id}::uuid`;
+      return NextResponse.json({ success: true, status: 'awaiting_confirmation' });
     }
 
     if (action === 'fulfill') {
-      const out = await s2t('/orders/create', {
-        method: 'POST',
-        body: JSON.stringify({
-          order_id: id,
-          sub_category_id: Number(order.item_id),
-          quantity: 1,
-          requirements: { player_id: order.player_id },
-          expected_unit_price: String(order.cost_usd),
-        }),
-      });
-      const st = String(out.order?.status ?? out.status ?? '').toLowerCase();
-      const failed = /fail|error|cancel|reject/i.test(st);
-      const finalStatus = failed ? 'failed' : 'completed';
-      await db`
-        UPDATE payment_orders SET
-          status = ${finalStatus},
-          provider_response = ${JSON.stringify(out)}::jsonb,
-          updated_at = now()
-        WHERE id = ${id}::uuid
-      `;
-      await notifyTelegram(
-        finalStatus === 'completed'
-          ? `✅ Enviado #${id.slice(0, 8)} ${order.game_name}`
-          : `❌ Falló envío #${id.slice(0, 8)}`
-      );
-      return NextResponse.json({ success: true, status: finalStatus, provider: out });
+      const itemId = Number(order.item_id);
+      const playerId = String(order.player_id || '');
+      const cost = order.cost_usd != null ? String(order.cost_usd) : undefined;
+
+      let body: any = {
+        order_id: id,
+        sub_category_id: itemId,
+        quantity: 1,
+        requirements: { player_id: playerId },
+      };
+      if (cost) body.expected_unit_price = cost;
+
+      try {
+        const out = await s2t('/orders/create', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const st = String(out.order?.status ?? out.status ?? '').toLowerCase();
+        const failed = /fail|error|cancel|reject/i.test(st);
+        const finalStatus = failed ? 'failed' : 'completed';
+        await db`
+          UPDATE payment_orders SET
+            status = ${finalStatus},
+            provider_response = ${JSON.stringify(out)}::jsonb,
+            updated_at = now()
+          WHERE id = ${id}::uuid
+        `;
+        await notifyTelegram(
+          finalStatus === 'completed'
+            ? `✅ Enviado #${id.slice(0, 8)} ${order.game_name || ''} ${order.item_name || ''}`
+            : `❌ Falló envío #${id.slice(0, 8)}`
+        );
+        return NextResponse.json({ success: true, status: finalStatus, provider: out });
+      } catch (e: any) {
+        // Mark completed manually if provider fails but admin confirms
+        if (b.forceComplete) {
+          await db`UPDATE payment_orders SET status = 'completed', updated_at = now() WHERE id = ${id}::uuid`;
+          return NextResponse.json({ success: true, status: 'completed', forced: true });
+        }
+        throw e;
+      }
     }
 
     return NextResponse.json({ error: 'Acción desconocida' }, { status: 400 });
