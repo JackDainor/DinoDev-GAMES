@@ -16,6 +16,7 @@ function listOf(body: any): any[] {
 export async function GET(req: NextRequest) {
   try {
     if (!authed(req)) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    await ensureSchema();
     const body = await s2t('/catalog/big-categories?for_ui=true');
     const all = listOf(body).map((c: any) => ({
       id: Number(c.id),
@@ -38,6 +39,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     if (!authed(req)) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    await ensureSchema();
     const b = await req.json();
     if (Array.isArray(b.enabledIds)) {
       await setSettings({ enabledBigCategoryIds: b.enabledIds.map(Number) });
