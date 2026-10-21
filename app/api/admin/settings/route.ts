@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSettings, setSettings } from '@/lib/settings';
 import { safeError } from '@/lib/shop2topup';
+import { ensureSchema } from '@/lib/schema';
 
 function authed(req: NextRequest) {
   const secret = process.env.OPERATOR_SECRET || '';
@@ -10,6 +11,7 @@ function authed(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     if (!authed(req)) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    await ensureSchema();
     const s = await getSettings();
     return NextResponse.json({ success: true, settings: s });
   } catch (e) {
@@ -21,6 +23,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     if (!authed(req)) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    await ensureSchema();
     const b = await req.json();
     await setSettings({
       rateBo: b.rateBo != null ? Number(b.rateBo) : undefined,
