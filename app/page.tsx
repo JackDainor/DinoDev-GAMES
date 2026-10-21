@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-type Game = { slug: string; name: string; short: string; bigCategoryId: number; cover?: string; currencyLabel?: string };
+type Game = { slug: string; name: string; short: string; bigCategoryId: number; cover?: string; coverLocal?: string; currencyLabel?: string };
 type Region = { id: number; name: string; region: string };
 type Product = {
   id: number; name: string; priceUsd: number; priceLocal: number;
@@ -42,7 +42,14 @@ export default function Home() {
         const r = await fetch('/api/catalog?list=games');
         const d = await r.json();
         if (r.ok && d.games?.length) {
-          setGames(d.games);
+          setGames(
+            d.games.map((g: any) => ({
+              ...g,
+              short: g.short || String(g.name || 'G').slice(0, 4).toUpperCase(),
+              cover: g.cover,
+              coverLocal: g.coverLocal || `/${g.slug}.jpg`,
+            }))
+          );
           setGame(d.games[0]);
           if (d.settings) setRates(d.settings);
         }
@@ -212,7 +219,33 @@ export default function Home() {
 
       <div className="game-tabs">
         {games.map((g) => (
-          <button key={g.bigCategoryId} type="button" className={`game-tab ${game?.bigCategoryId === g.bigCategoryId ? 'active' : ''}`} onClick={() => setGame(g)}>
+          <button
+            key={g.bigCategoryId}
+            type="button"
+            className={`game-tab ${game?.bigCategoryId === g.bigCategoryId ? 'active' : ''}`}
+            onClick={() => setGame(g)}
+          >
+            <span className="game-cover">
+              <img
+                src={g.coverLocal || g.cover || `/${g.slug}.jpg`}
+                alt={g.name}
+                loading="lazy"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  // 1) try remote Shop2TopUp cover  2) placeholder
+                  if (g.cover && img.src.indexOf(g.cover) === -1) {
+                    img.src = g.cover;
+                  } else if (!img.dataset.fallback) {
+                    img.dataset.fallback = '1';
+                    img.src =
+                      'data:image/svg+xml,' +
+                      encodeURIComponent(
+                        `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect fill="#0f241c" width="80" height="80" rx="12"/><text x="40" y="48" text-anchor="middle" fill="#3dff9a" font-size="22" font-family="sans-serif">${(g.short || '?').slice(0, 3)}</text></svg>`
+                      );
+                  }
+                }}
+              />
+            </span>
             <strong>{g.short}</strong>
             <span>{g.name}</span>
           </button>

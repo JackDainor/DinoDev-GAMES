@@ -105,3 +105,11 @@ input, select, textarea {
   border-radius: var(--radius); background: var(--card); border: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 0.55rem;
 }
+
+.game-tab { align-items: center; gap: 0.25rem; }
+.game-cover {
+  width: 48px; height: 48px; border-radius: 12px; overflow: hidden;
+  background: rgba(0,0,0,0.35); display: grid; place-items: center;
+  border: 1px solid var(--line);
+}
+.game-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
