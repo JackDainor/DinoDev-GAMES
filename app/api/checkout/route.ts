@@ -1,126 +1,122 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { s2t, safeError } from '@/lib/shop2topup';
 import { sql } from '@/lib/db';
-import { getPayCountry, localAmount, PAYMENT_TTL_MS, PAY_COUNTRIES } from '@/lib/money';
+import { ensureSchema } from '@/lib/schema';
+import { getSessionUser } from '@/lib/auth';
+import { getSettings, localFromUsd, sellPriceUsd } from '@/lib/settings';
+import { s2t, safeError } from '@/lib/shop2topup';
 import { notifyTelegram } from '@/lib/notify';
-
-function listOf(body: any): any[] {
-  if (Array.isArray(body?.data)) return body.data;
-  if (Array.isArray(body?.requirements)) return body.requirements;
-  return [];
-}
-
-async function ensureTables() {
-  const db = sql();
-  await db`
-    CREATE TABLE IF NOT EXISTS payment_orders (
-      id uuid PRIMARY KEY,
-      status text NOT NULL,
-      game_slug text NOT NULL,
-      game_name text NOT NULL,
-      item_id integer NOT NULL,
-      item_name text NOT NULL,
-      category_id integer NOT NULL,
-      region_label text,
-      player_id text NOT NULL,
-      player_name text NOT NULL,
-      player_region text,
-      usd_price numeric NOT NULL,
-      local_currency text NOT NULL,
-      local_amount numeric NOT NULL,
-      pay_country text NOT NULL,
-      qr_url text,
-      expires_at timestamptz NOT NULL,
-      provider_order_id text,
-      provider_response jsonb,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      updated_at timestamptz NOT NULL DEFAULT now()
-    )
-  `;
-  return db;
-}
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureSchema();
+    const user = await getSessionUser();
     const b = await req.json();
     const itemId = Number(b.itemId);
     const categoryId = Number(b.categoryId);
     const playerId = String(b.playerId || '').trim();
-    const playerName = String(b.playerName || '').trim();
-    const playerRegion = String(b.playerRegion || '').trim();
-    const payCountry = String(b.payCountry || 'BO').toUpperCase();
-    const gameSlug = String(b.gameSlug || 'freefire');
-    const gameName = String(b.gameName || 'Free Fire');
-    const itemName = String(b.itemName || 'Paquete');
+    const playerName = String(b.playerName || '');
+    const gameName = String(b.gameName || 'Juego');
+    const itemName = String(b.itemName || 'Pack');
     const regionLabel = String(b.regionLabel || '');
+    const market = String(b.payCountry || 'BO').toUpperCase();
+    const payMethod = String(b.payMethod || (user ? 'wallet' : 'qr'));
 
-    if (!Number.isSafeInteger(itemId) || itemId <= 0 || !Number.isSafeInteger(categoryId) || categoryId <= 0) {
-      return NextResponse.json({ error: 'Selecciona un paquete válido.' }, { status: 400 });
-    }
-    if (!/^\d{5,20}$/.test(playerId) || !playerName) {
-      return NextResponse.json({ error: 'Valida el ID del jugador antes de pagar.' }, { status: 400 });
-    }
-    if (!PAY_COUNTRIES.some((c) => c.code === payCountry)) {
-      return NextResponse.json({ error: 'País de pago no soportado. Elige Bolivia o Brasil.' }, { status: 400 });
+    if (!itemId || !categoryId || !playerId) {
+      return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
     }
 
-    // Live price from provider
-    const pd = await s2t(`/catalog/subcategory/${itemId}/price`);
-    const usd = Number(pd.unit_price ?? pd.price?.unit_price);
-    if (!Number.isFinite(usd) || usd <= 0) {
-      return NextResponse.json({ error: 'El proveedor no devolvió un precio válido.' }, { status: 502 });
-    }
+    let cost = Number(b.costUsd || 0);
+    try {
+      const q = await s2t(`/catalog/subcategory/${itemId}/price`);
+      cost = Number(q?.unit_price ?? q?.price?.unit_price ?? cost);
+    } catch { /* */ }
 
-    const local = localAmount(usd, payCountry);
+    const settings = await getSettings();
+    const priceUsd = sellPriceUsd(cost, settings.markupUsd);
+    const local = localFromUsd(priceUsd, market, settings.rateBo, settings.rateBr);
     const id = randomUUID();
-    const expiresAt = new Date(Date.now() + PAYMENT_TTL_MS).toISOString();
-    const db = await ensureTables();
+    const db = sql();
 
-    await db`
-      INSERT INTO payment_orders (
-        id, status, game_slug, game_name, item_id, item_name, category_id, region_label,
-        player_id, player_name, player_region, usd_price, local_currency, local_amount,
-        pay_country, qr_url, expires_at
-      ) VALUES (
-        ${id}::uuid, 'pending_payment', ${gameSlug}, ${gameName}, ${itemId}, ${itemName}, ${categoryId}, ${regionLabel},
-        ${playerId}, ${playerName}, ${playerRegion}, ${String(usd)}, ${local.currency}, ${String(local.amount)},
-        ${payCountry}, ${local.qrUrl || null}, ${expiresAt}::timestamptz
-      )
-    `;
+    if (payMethod === 'wallet') {
+      if (!user) return NextResponse.json({ error: 'Inicia sesión para pagar con billetera.' }, { status: 401 });
+      const bal = Number(user.balance_usd);
+      if (bal < priceUsd) {
+        return NextResponse.json(
+          { error: `Saldo insuficiente. Tienes ${bal.toFixed(4)} USD, el pack cuesta ${priceUsd.toFixed(4)} USD.` },
+          { status: 402 }
+        );
+      }
+      await db`
+        UPDATE app_users SET balance_usd = balance_usd - ${priceUsd}, updated_at = now()
+        WHERE id = ${user.id}::uuid AND balance_usd >= ${priceUsd}
+      `;
+      await db`
+        INSERT INTO wallet_ledger (user_id, amount_usd, kind, status, note)
+        VALUES (${user.id}::uuid, ${-priceUsd}, 'purchase', 'completed', ${'Orden ' + id})
+      `;
+      await db`
+        INSERT INTO payment_orders (
+          id, status, user_id, game_name, item_name, item_id, category_id,
+          player_id, player_name, region_label, cost_usd, price_usd,
+          local_amount, local_currency, pay_country, pay_method, expires_at
+        ) VALUES (
+          ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid, ${gameName}, ${itemName}, ${itemId}, ${categoryId},
+          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
+          ${local.amount}, ${local.currency}, ${market}, 'wallet', now() + interval '1 hour'
+        )
+      `;
+      await notifyTelegram(
+        `🛒 <b>Pedido billetera</b>\n${user.username} · ${gameName} ${itemName}\n` +
+          `${playerName || playerId} · ${priceUsd.toFixed(4)} USD\nID: ${id}`
+      );
+      return NextResponse.json({
+        success: true,
+        order: { id, status: 'awaiting_confirmation', priceUsd, payMethod: 'wallet' },
+        message: 'Pagado con billetera. El admin enviará la recarga.',
+      });
+    }
 
-    const country = getPayCountry(payCountry);
-
+    // QR guest flow — order pending_payment
+    if (user?.id) {
+      await db`
+        INSERT INTO payment_orders (
+          id, status, user_id, game_name, item_name, item_id, category_id,
+          player_id, player_name, region_label, cost_usd, price_usd,
+          local_amount, local_currency, pay_country, pay_method, expires_at
+        ) VALUES (
+          ${id}::uuid, 'pending_payment', ${user.id}::uuid, ${gameName}, ${itemName}, ${itemId}, ${categoryId},
+          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
+          ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
+        )
+      `;
+    } else {
+      await db`
+        INSERT INTO payment_orders (
+          id, status, game_name, item_name, item_id, category_id,
+          player_id, player_name, region_label, cost_usd, price_usd,
+          local_amount, local_currency, pay_country, pay_method, expires_at
+        ) VALUES (
+          ${id}::uuid, 'pending_payment', ${gameName}, ${itemName}, ${itemId}, ${categoryId},
+          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
+          ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
+        )
+      `;
+    }
     await notifyTelegram(
-      `🟡 Nueva orden QR (esperando pago)\n` +
-      `${gameName} · ${itemName}\n` +
-      `Jugador: ${playerName} (${playerId})\n` +
-      `Monto: ${local.currency} ${local.amount} (${payCountry})\n` +
-      `Orden: ${id}`
+      `💳 <b>Nueva orden QR</b>\n${gameName} ${itemName}\n${local.symbol} ${local.amount} · ${id}`
     );
-
     return NextResponse.json({
       success: true,
       order: {
         id,
         status: 'pending_payment',
-        expiresAt,
-        gameName,
-        itemName,
-        regionLabel,
-        playerId,
-        playerName,
-        playerRegion,
-        usdPrice: usd,
+        priceUsd,
         localAmount: local.amount,
         localCurrency: local.currency,
-        localSymbol: local.symbol,
-        payCountry: country.code,
-        payCountryName: country.name,
-        method: local.method,
-        qrUrl: local.qrUrl || null,
-        pixKey: local.pixKey || null,
-        rate: local.rate,
+        symbolLocal: local.symbol,
+        payMethod: 'qr',
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
       },
     });
   } catch (e) {
