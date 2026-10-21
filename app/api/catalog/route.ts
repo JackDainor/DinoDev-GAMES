@@ -44,14 +44,27 @@ export async function GET(req: NextRequest) {
           rateBr: settings.rateBr,
           markupUsd: settings.markupUsd,
         },
-        games: all.map((c: any) => ({
-          slug: slugify(c.name),
-          name: String(c.name),
-          short: String(c.name).slice(0, 4).toUpperCase(),
-          bigCategoryId: Number(c.id),
-          cover: c.image_url ? `https://shop2topup.com/${c.image_url}` : `/${slugify(c.name)}.jpg`,
-          currencyLabel: /roblox|steam|apple|google|razer|gift/i.test(String(c.name)) ? 'Crédito' : 'Créditos',
-        })),
+        games: all.map((c: any) => {
+          const slug = slugify(c.name);
+          const raw = String(c.image_url || c.image || '').trim();
+          let cover = `/${slug}.jpg`; // local public/ first preference in UI fallback chain
+          if (raw) {
+            if (raw.startsWith('http')) cover = raw;
+            else if (raw.startsWith('/')) cover = `https://shop2topup.com${raw}`;
+            else cover = `https://shop2topup.com/storage/${raw}`;
+          }
+          return {
+            slug,
+            name: String(c.name),
+            short: String(c.name).slice(0, 4).toUpperCase(),
+            bigCategoryId: Number(c.id),
+            cover,
+            coverLocal: `/${slug}.jpg`,
+            currencyLabel: /roblox|steam|apple|google|razer|gift/i.test(String(c.name))
+              ? 'Crédito'
+              : 'Créditos',
+          };
+        }),
       });
     }
 
