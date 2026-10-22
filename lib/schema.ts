@@ -82,6 +82,15 @@ export async function ensureSchema() {
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS provider_response jsonb`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS expires_at timestamptz`; } catch { /* */ }
 
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS usd_price numeric`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS local_price numeric`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS currency text`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS amount numeric`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN usd_price DROP NOT NULL`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN local_price DROP NOT NULL`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN price_usd DROP NOT NULL`; } catch { /* */ }
+
+
   // Relax NOT NULL on legacy columns that break inserts
   for (const col of [
     'game_slug',
