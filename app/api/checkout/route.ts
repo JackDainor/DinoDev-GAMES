@@ -3,9 +3,15 @@ import { randomUUID } from 'crypto';
 import { sql } from '@/lib/db';
 import { ensureSchema } from '@/lib/schema';
 import { getSessionUser } from '@/lib/auth';
-import { getSettings, localFromUsd, sellPriceUsd } from '@/lib/settings';
+import { getSettings, localFromUsd, sellPriceUsd, slugify } from '@/lib/settings';
 import { s2t, safeError } from '@/lib/shop2topup';
 import { notifyTelegram } from '@/lib/notify';
+
+function qrFor(market: string) {
+  const m = market.toUpperCase();
+  if (m === 'BR') return process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
+  return process.env.QR_URL_BO || null;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,6 +23,7 @@ export async function POST(req: NextRequest) {
     const playerId = String(b.playerId || '').trim();
     const playerName = String(b.playerName || '');
     const gameName = String(b.gameName || 'Juego');
+    const gameSlug = String(b.gameSlug || b.slug || slugify(gameName) || 'game');
     const itemName = String(b.itemName || 'Pack');
     const regionLabel = String(b.regionLabel || '');
     const market = String(b.payCountry || 'BO').toUpperCase();
@@ -30,7 +37,9 @@ export async function POST(req: NextRequest) {
     try {
       const q = await s2t(`/catalog/subcategory/${itemId}/price`);
       cost = Number(q?.unit_price ?? q?.price?.unit_price ?? cost);
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
 
     const settings = await getSettings();
     const priceUsd = sellPriceUsd(cost, settings.markupUsd);
@@ -39,11 +48,15 @@ export async function POST(req: NextRequest) {
     const db = sql();
 
     if (payMethod === 'wallet') {
-      if (!user) return NextResponse.json({ error: 'Inicia sesión para pagar con billetera.' }, { status: 401 });
+      if (!user) {
+        return NextResponse.json({ error: 'Inicia sesión para pagar con billetera.' }, { status: 401 });
+      }
       const bal = Number(user.balance_usd);
       if (bal < priceUsd) {
         return NextResponse.json(
-          { error: `Saldo insuficiente. Tienes ${bal.toFixed(4)} USD, el pack cuesta ${priceUsd.toFixed(4)} USD.` },
+          {
+            error: `Saldo insuficiente. Tienes ${bal.toFixed(4)} USD, el pack cuesta ${priceUsd.toFixed(4)} USD.`,
+          },
           { status: 402 }
         );
       }
@@ -57,11 +70,11 @@ export async function POST(req: NextRequest) {
       `;
       await db`
         INSERT INTO payment_orders (
-          id, status, user_id, game_name, item_name, item_id, category_id,
+          id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
           player_id, player_name, region_label, cost_usd, price_usd,
           local_amount, local_currency, pay_country, pay_method, expires_at
         ) VALUES (
-          ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid, ${gameName}, ${itemName}, ${itemId}, ${categoryId},
+          ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid, ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
           ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
           ${local.amount}, ${local.currency}, ${market}, 'wallet', now() + interval '1 hour'
         )
@@ -77,15 +90,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // QR guest flow — order pending_payment
+    // QR flow
     if (user?.id) {
       await db`
         INSERT INTO payment_orders (
-          id, status, user_id, game_name, item_name, item_id, category_id,
+          id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
           player_id, player_name, region_label, cost_usd, price_usd,
           local_amount, local_currency, pay_country, pay_method, expires_at
         ) VALUES (
-          ${id}::uuid, 'pending_payment', ${user.id}::uuid, ${gameName}, ${itemName}, ${itemId}, ${categoryId},
+          ${id}::uuid, 'pending_payment', ${user.id}::uuid, ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
           ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
           ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
         )
@@ -93,15 +106,20 @@ export async function POST(req: NextRequest) {
     } else {
       await db`
         INSERT INTO payment_orders (
-          id, status, game_name, item_name, item_id, category_id,
+          id, status, game_name, game_slug, item_name, item_id, category_id,
           player_id, player_name, region_label, cost_usd, price_usd,
           local_amount, local_currency, pay_country, pay_method, expires_at
         ) VALUES (
-          ${id}::uuid, 'pending_payment', ${gameName}, ${itemName}, ${itemId}, ${categoryId},
+          ${id}::uuid, 'pending_payment', ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
           ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
           ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
         )
       `;
+    }
+
+    const qrUrl = qrFor(market);
+    if (qrUrl) {
+      await db`UPDATE payment_orders SET qr_url = ${qrUrl} WHERE id = ${id}::uuid`;
     }
     await notifyTelegram(
       `💳 <b>Nueva orden QR</b>\n${gameName} ${itemName}\n${local.symbol} ${local.amount} · ${id}`
@@ -116,6 +134,7 @@ export async function POST(req: NextRequest) {
         localCurrency: local.currency,
         symbolLocal: local.symbol,
         payMethod: 'qr',
+        qrUrl,
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
       },
     });
