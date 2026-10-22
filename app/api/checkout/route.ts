@@ -20,17 +20,18 @@ export async function POST(req: NextRequest) {
     const b = await req.json();
     const itemId = Number(b.itemId);
     const categoryId = Number(b.categoryId);
-    const playerId = String(b.playerId || '').trim();
-    const playerName = String(b.playerName || '');
+    const playerId = String(b.playerId || '').trim() || 'n/a';
+    const playerName = String(b.playerName || playerId);
     const gameName = String(b.gameName || 'Juego');
     const gameSlug = String(b.gameSlug || b.slug || slugify(gameName) || 'game');
     const itemName = String(b.itemName || 'Pack');
     const regionLabel = String(b.regionLabel || '');
     const market = String(b.payCountry || 'BO').toUpperCase();
-    const payMethod = String(b.payMethod || (user ? 'wallet' : 'qr'));
+    let payMethod = String(b.payMethod || 'qr').toLowerCase();
+    if (payMethod !== 'wallet') payMethod = 'qr';
 
-    if (!itemId || !categoryId || !playerId) {
-      return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
+    if (!itemId || !categoryId) {
+      return NextResponse.json({ error: 'Datos incompletos (paquete).' }, { status: 400 });
     }
 
     let cost = Number(b.costUsd || 0);
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
       const q = await s2t(`/catalog/subcategory/${itemId}/price`);
       cost = Number(q?.unit_price ?? q?.price?.unit_price ?? cost);
     } catch {
-      /* */
+      /* use client cost */
     }
 
     const settings = await getSettings();
@@ -47,6 +48,11 @@ export async function POST(req: NextRequest) {
     const id = randomUUID();
     const db = sql();
 
+    const qrBo = process.env.QR_URL_BO || null;
+    const qrBr = process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
+    const qrUrl = qrFor(market) || qrBo || qrBr;
+
+    // WALLET
     if (payMethod === 'wallet') {
       if (!user) {
         return NextResponse.json({ error: 'Inicia sesión para pagar con billetera.' }, { status: 401 });
@@ -64,43 +70,64 @@ export async function POST(req: NextRequest) {
         UPDATE app_users SET balance_usd = balance_usd - ${priceUsd}, updated_at = now()
         WHERE id = ${user.id}::uuid AND balance_usd >= ${priceUsd}
       `;
-      await db`
-        INSERT INTO wallet_ledger (user_id, amount_usd, kind, status, note)
-        VALUES (${user.id}::uuid, ${-priceUsd}, 'purchase', 'completed', ${'Orden ' + id})
-      `;
+      try {
+        await db`
+          INSERT INTO wallet_ledger (user_id, amount_usd, kind, status, note)
+          VALUES (${user.id}::uuid, ${-priceUsd}, 'purchase', 'completed', ${'Orden ' + id})
+        `;
+      } catch {
+        /* ledger optional */
+      }
+
       await db`
         INSERT INTO payment_orders (
           id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
           player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, expires_at
+          local_amount, local_currency, pay_country, pay_method, qr_url, expires_at
         ) VALUES (
-          ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid, ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
+          ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid,
+          ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
           ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'wallet', now() + interval '1 hour'
+          ${local.amount}, ${local.currency}, ${market}, 'wallet', ${qrUrl},
+          now() + interval '1 hour'
         )
       `;
+
       await notifyTelegram(
-        `🛒 <b>Pedido billetera</b>\n${user.username} · ${gameName} ${itemName}\n` +
-          `${playerName || playerId} · ${priceUsd.toFixed(4)} USD\nID: ${id}`
+        `🛒 Pedido BILLETERA\n${user.username} (${user.email})\nWA: ${user.whatsapp || '—'}\n` +
+          `${gameName} · ${itemName}\n${playerName} (${playerId})\n` +
+          `USD ${priceUsd.toFixed(4)}\nOrden: ${id}`
       );
+
       return NextResponse.json({
         success: true,
-        order: { id, status: 'awaiting_confirmation', priceUsd, payMethod: 'wallet' },
+        order: {
+          id,
+          status: 'awaiting_confirmation',
+          priceUsd,
+          payMethod: 'wallet',
+          localAmount: local.amount,
+          localCurrency: local.currency,
+          symbolLocal: local.symbol,
+        },
         message: 'Pagado con billetera. El admin enviará la recarga.',
       });
     }
 
-    // QR flow
-    if (user?.id) {
+    // QR / guest or registered
+    const userId = user?.id || null;
+    if (userId) {
       await db`
         INSERT INTO payment_orders (
           id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
           player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, expires_at
+          local_amount, local_currency, pay_country, pay_method, qr_url, expires_at
         ) VALUES (
-          ${id}::uuid, 'pending_payment', ${user.id}::uuid, ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
+          ${id}::uuid, 'pending_payment', ${userId}::uuid,
+          ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
           ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
+          ${local.amount}, ${local.currency}, ${market}, 'qr', ${qrUrl},
+          now() + interval '1 hour'
         )
       `;
     } else {
@@ -108,29 +135,27 @@ export async function POST(req: NextRequest) {
         INSERT INTO payment_orders (
           id, status, game_name, game_slug, item_name, item_id, category_id,
           player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, expires_at
+          local_amount, local_currency, pay_country, pay_method, qr_url, expires_at
         ) VALUES (
-          ${id}::uuid, 'pending_payment', ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
+          ${id}::uuid, 'pending_payment',
+          ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
           ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
+          ${local.amount}, ${local.currency}, ${market}, 'qr', ${qrUrl},
+          now() + interval '1 hour'
         )
       `;
     }
 
-    const qrBo = process.env.QR_URL_BO || null;
-    const qrBr = process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
-    const qrUrl = qrFor(market) || qrBo || qrBr;
-    if (qrUrl) {
-      await db`UPDATE payment_orders SET qr_url = ${qrUrl} WHERE id = ${id}::uuid`;
-    }
     const who = user
       ? `Usuario: ${user.username} · ${user.email}${user.whatsapp ? ' · WA ' + user.whatsapp : ''}`
       : 'Invitado (sin cuenta)';
+
     await notifyTelegram(
-      `💳 <b>Nueva orden</b>\n${who}\n${gameName} ${itemName}\n` +
-        `${playerName || playerId}\n${local.symbol} ${local.amount} · USD ${priceUsd.toFixed(4)}\n` +
+      `💳 Nueva orden QR\n${who}\n${gameName} · ${itemName}\n` +
+        `${playerName} (${playerId})\n${local.symbol} ${local.amount} · USD ${priceUsd.toFixed(4)}\n` +
         `Orden: ${id}`
     );
+
     return NextResponse.json({
       success: true,
       order: {
@@ -150,9 +175,14 @@ export async function POST(req: NextRequest) {
         },
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
       },
+      message: 'Orden creada. Elige método de pago y sube el comprobante.',
     });
   } catch (e) {
     const x = safeError(e);
-    return NextResponse.json(x, { status: x.status || 500 });
+    console.error('[checkout]', e);
+    return NextResponse.json(
+      { error: x.error || 'No se pudo crear la orden', status: x.status || 500 },
+      { status: x.status || 500 }
+    );
   }
 }
