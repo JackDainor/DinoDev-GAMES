@@ -29,7 +29,7 @@ export default function AdminPage() {
   const [catalogQ, setCatalogQ] = useState('');
   const [rateBo, setRateBo] = useState(12);
   const [rateBr, setRateBr] = useState(5.5);
-  const [markupUsd, setMarkupUsd] = useState(0.2);
+  const [markupUsd, setMarkupUsd] = useState(0);
   const [users, setUsers] = useState<any[]>([]);
   const [deposits, setDeposits] = useState<any[]>([]);
   const [creditId, setCreditId] = useState('');
@@ -464,7 +464,7 @@ export default function AdminPage() {
           <h2>Tipo de cambio y ganancia en USD</h2>
           <p className="muted">Precio venta = costo Shop2TopUp + ganancia fija en USD.</p>
           <label>
-            Ganancia por pack (USD)
+            Ganancia por pack en USD (pon 0 para mismo precio que Shop2TopUp)
             <input type="number" step="0.01" min={0} value={markupUsd} onChange={(e) => setMarkupUsd(Number(e.target.value))} />
           </label>
           <label>
