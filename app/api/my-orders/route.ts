@@ -7,45 +7,59 @@ import { safeError } from '@/lib/shop2topup';
 export async function POST(req: NextRequest) {
   try {
     await ensureSchema();
-    const user = await getSessionUser();
     const b = await req.json().catch(() => ({}));
-    const ids: string[] = Array.isArray(b.ids)
-      ? b.ids.filter((x: any) => typeof x === 'string' && x.length > 10).slice(0, 40)
-      : [];
+    const ids = Array.isArray(b.ids) ? b.ids.map(String).filter(Boolean).slice(0, 50) : [];
+    const playerId = String(b.playerId || '').trim();
+    const user = await getSessionUser();
     const db = sql();
+
     let rows: any[] = [];
 
-    if (user) {
+    if (ids.length) {
       rows = await db`
         SELECT id, status, game_name, item_name, player_id, player_name,
-               price_usd::text, local_amount::text, local_currency, pay_method, created_at, expires_at
+               price_usd::text, local_amount::text, local_currency, pay_method,
+               pay_country, qr_url, created_at, expires_at
+        FROM payment_orders
+        WHERE id = ANY(${ids}::uuid[])
+        ORDER BY created_at DESC
+        LIMIT 50
+      `;
+    }
+
+    if (user?.id) {
+      const more = await db`
+        SELECT id, status, game_name, item_name, player_id, player_name,
+               price_usd::text, local_amount::text, local_currency, pay_method,
+               pay_country, qr_url, created_at, expires_at
         FROM payment_orders
         WHERE user_id = ${user.id}::uuid
         ORDER BY created_at DESC
-        LIMIT 40
+        LIMIT 50
       `;
-    } else if (ids.length === 1) {
-      rows = await db`
-        SELECT id, status, game_name, item_name, player_id, player_name,
-               price_usd::text, local_amount::text, local_currency, pay_method, created_at, expires_at
-        FROM payment_orders WHERE id = ${ids[0]}::uuid
-        LIMIT 1
-      `;
-    } else if (ids.length > 1) {
-      // fetch one-by-one to avoid array binding issues on serverless driver
-      const out: any[] = [];
-      for (const id of ids.slice(0, 20)) {
-        const r = await db`
-          SELECT id, status, game_name, item_name, player_id, player_name,
-                 price_usd::text, local_amount::text, local_currency, pay_method, created_at, expires_at
-          FROM payment_orders WHERE id = ${id}::uuid LIMIT 1
-        `;
-        if (r[0]) out.push(r[0]);
-      }
-      rows = out;
+      const seen = new Set(rows.map((r) => r.id));
+      for (const r of more) if (!seen.has(r.id)) rows.push(r);
     }
 
-    return NextResponse.json({ success: true, orders: rows });
+    if (playerId && rows.length < 50) {
+      const more = await db`
+        SELECT id, status, game_name, item_name, player_id, player_name,
+               price_usd::text, local_amount::text, local_currency, pay_method,
+               pay_country, qr_url, created_at, expires_at
+        FROM payment_orders
+        WHERE player_id = ${playerId}
+        ORDER BY created_at DESC
+        LIMIT 20
+      `;
+      const seen = new Set(rows.map((r) => r.id));
+      for (const r of more) if (!seen.has(r.id)) rows.push(r);
+    }
+
+    rows.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    return NextResponse.json({ success: true, orders: rows.slice(0, 50) });
   } catch (e) {
     const x = safeError(e);
     return NextResponse.json(x, { status: x.status || 500 });
