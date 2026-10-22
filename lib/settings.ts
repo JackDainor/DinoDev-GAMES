@@ -33,7 +33,7 @@ export async function getSettings(): Promise<AppSettings> {
   return {
     rateBo: Math.max(0.01, Number(m.rate_bo) || 12),
     rateBr: Math.max(0.01, Number(m.rate_br) || 5.5),
-    markupUsd: Math.max(0, Number(m.markup_usd) || 0.2),
+    markupUsd: Math.max(0, Number(m.markup_usd) || 0),
     enabledBigCategoryIds: enabled,
   };
 }
