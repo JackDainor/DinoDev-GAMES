@@ -157,7 +157,7 @@ export default function AdminPage() {
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.jpg" alt="DinoDev" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
+          <img src="/logo.png" alt="DinoDev" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
           <h1 style={{ margin: 0 }}>DinoDev Admin</h1>
           <p className="muted" style={{ margin: 0 }}>
             Ingresa la contraseña de operador (<code>OPERATOR_SECRET</code> en Vercel).
@@ -193,7 +193,7 @@ export default function AdminPage() {
             ☰ Menú
           </button>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.jpg" alt="" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
+          <img src="/logo.png" alt="" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
           <div>
             <strong>DinoDev Admin</strong>
             <div className="muted" style={{ fontSize: 12 }}>
