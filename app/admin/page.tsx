@@ -488,7 +488,7 @@ export default function AdminPage() {
               Si no editas un pack, usa el precio de Shop2TopUp.
             </p>
             <div style={{ display: 'grid', gap: 8 }}>
-              {cats
+              {categories
                 .filter((c) => enabledIds.includes(c.id))
                 .map((c) => (
                   <button
@@ -524,7 +524,7 @@ export default function AdminPage() {
                     <small className="muted"> · editar precios USD</small>
                   </button>
                 ))}
-              {!cats.filter((c) => enabledIds.includes(c.id)).length && (
+              {!categories.filter((c) => enabledIds.includes(c.id)).length && (
                 <p className="muted">Activa juegos en la pestaña Juegos / Gift cards primero.</p>
               )}
             </div>
