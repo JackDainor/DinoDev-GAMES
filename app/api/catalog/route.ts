@@ -1,134 +1,199 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
-import { sql } from '@/lib/db';
-import { ensureSchema } from '@/lib/schema';
-import { getSessionUser } from '@/lib/auth';
-import { getSettings, localFromUsd, sellPriceUsd } from '@/lib/settings';
 import { s2t, safeError } from '@/lib/shop2topup';
-import { notifyTelegram } from '@/lib/notify';
+import { getSettings, localFromUsd, sellPriceUsd, slugify, type AppSettings } from '@/lib/settings';
 
-function qrFor(market: string) {
-  const m = market.toUpperCase();
-  if (m === 'BR') return process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
-  return process.env.QR_URL_BO || null;
+export const dynamic = 'force-dynamic';
+
+function listOf(body: any): any[] {
+  if (Array.isArray(body?.data)) return body.data;
+  if (Array.isArray(body?.categories)) return body.categories;
+  if (Array.isArray(body?.subcategories)) return body.subcategories;
+  if (Array.isArray(body?.items)) return body.items;
+  if (Array.isArray(body?.big_categories)) return body.big_categories;
+  if (Array.isArray(body)) return body;
+  return [];
 }
 
-export async function POST(req: NextRequest) {
+function regionLabel(cat: any): string {
+  const n = String(cat.name || '');
+  if (/latam/i.test(n)) return 'LATAM';
+  if (/brazil|brasil/i.test(n)) return 'BR';
+  if (/global|worldwide/i.test(n)) return 'Global';
+  if (/indonesia/i.test(n)) return 'ID';
+  if (/europe|\beu\b/i.test(n)) return 'EU';
+  if (/usa|united states/i.test(n)) return 'US';
+  return n.slice(0, 12) || 'Global';
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  rateBo: 12,
+  rateBr: 5.5,
+  markupUsd: 0.2,
+  enabledBigCategoryIds: [],
+};
+
+async function safeSettings(): Promise<AppSettings> {
   try {
-    await ensureSchema();
-    const user = await getSessionUser();
-    const b = await req.json();
-    const itemId = Number(b.itemId);
-    const categoryId = Number(b.categoryId);
-    const playerId = String(b.playerId || '').trim();
-    const playerName = String(b.playerName || '');
-    const gameName = String(b.gameName || 'Juego');
-    const itemName = String(b.itemName || 'Pack');
-    const regionLabel = String(b.regionLabel || '');
-    const market = String(b.payCountry || 'BO').toUpperCase();
-    const payMethod = String(b.payMethod || (user ? 'wallet' : 'qr'));
+    return await getSettings();
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
 
-    if (!itemId || !categoryId || !playerId) {
-      return NextResponse.json({ error: 'Datos incompletos' }, { status: 400 });
-    }
+export async function GET(req: NextRequest) {
+  try {
+    const sp = req.nextUrl.searchParams;
+    const settings = await safeSettings();
+    const market = (sp.get('market') || 'BO').toUpperCase();
 
-    let cost = Number(b.costUsd || 0);
-    try {
-      const q = await s2t(`/catalog/subcategory/${itemId}/price`);
-      cost = Number(q?.unit_price ?? q?.price?.unit_price ?? cost);
-    } catch { /* */ }
+    if (sp.get('list') === 'games') {
+      const body = await s2t('/catalog/big-categories?for_ui=true');
+      let all = listOf(body);
 
-    const settings = await getSettings();
-    const priceUsd = sellPriceUsd(cost, settings.markupUsd);
-    const local = localFromUsd(priceUsd, market, settings.rateBo, settings.rateBr);
-    const id = randomUUID();
-    const db = sql();
-
-    if (payMethod === 'wallet') {
-      if (!user) return NextResponse.json({ error: 'Inicia sesión para pagar con billetera.' }, { status: 401 });
-      const bal = Number(user.balance_usd);
-      if (bal < priceUsd) {
-        return NextResponse.json(
-          { error: `Saldo insuficiente. Tienes ${bal.toFixed(4)} USD, el pack cuesta ${priceUsd.toFixed(4)} USD.` },
-          { status: 402 }
-        );
+      // Fallback endpoints if first response empty
+      if (!all.length) {
+        try {
+          const body2 = await s2t('/catalog/big-categories');
+          all = listOf(body2);
+        } catch {
+          /* */
+        }
       }
-      await db`
-        UPDATE app_users SET balance_usd = balance_usd - ${priceUsd}, updated_at = now()
-        WHERE id = ${user.id}::uuid AND balance_usd >= ${priceUsd}
-      `;
-      await db`
-        INSERT INTO wallet_ledger (user_id, amount_usd, kind, status, note)
-        VALUES (${user.id}::uuid, ${-priceUsd}, 'purchase', 'completed', ${'Orden ' + id})
-      `;
-      await db`
-        INSERT INTO payment_orders (
-          id, status, user_id, game_name, item_name, item_id, category_id,
-          player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, expires_at
-        ) VALUES (
-          ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid, ${gameName}, ${itemName}, ${itemId}, ${categoryId},
-          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'wallet', now() + interval '1 hour'
-        )
-      `;
-      await notifyTelegram(
-        `🛒 <b>Pedido billetera</b>\n${user.username} · ${gameName} ${itemName}\n` +
-          `${playerName || playerId} · ${priceUsd.toFixed(4)} USD\nID: ${id}`
-      );
+
+      const enabled = settings.enabledBigCategoryIds || [];
+      if (enabled.length > 0) {
+        const allow = new Set(enabled.map(Number));
+        const filtered = all.filter((c: any) => allow.has(Number(c.id)));
+        // If admin selection yields nothing, show full catalog instead of empty store
+        if (filtered.length > 0) all = filtered;
+      }
+
+      const games = all
+        .map((c: any) => {
+          const id = Number(c.id);
+          if (!Number.isFinite(id) || id <= 0) return null;
+          const name = String(c.name || c.title || `Game ${id}`);
+          const slug = slugify(name);
+          return {
+            slug,
+            name,
+            short: name.slice(0, 4).toUpperCase(),
+            bigCategoryId: id,
+            cover: `/${slug}.jpg`,
+            coverLocal: `/${slug}.jpg`,
+          };
+        })
+        .filter(Boolean);
+
       return NextResponse.json({
         success: true,
-        order: { id, status: 'awaiting_confirmation', priceUsd, payMethod: 'wallet' },
-        message: 'Pagado con billetera. El admin enviará la recarga.',
+        settings: {
+          rateBo: settings.rateBo,
+          rateBr: settings.rateBr,
+          markupUsd: settings.markupUsd,
+        },
+        games,
       });
     }
 
-    // QR guest flow — order pending_payment
-    if (user?.id) {
-      await db`
-        INSERT INTO payment_orders (
-          id, status, user_id, game_name, item_name, item_id, category_id,
-          player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, expires_at
-        ) VALUES (
-          ${id}::uuid, 'pending_payment', ${user.id}::uuid, ${gameName}, ${itemName}, ${itemId}, ${categoryId},
-          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
-        )
-      `;
-    } else {
-      await db`
-        INSERT INTO payment_orders (
-          id, status, game_name, item_name, item_id, category_id,
-          player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, expires_at
-        ) VALUES (
-          ${id}::uuid, 'pending_payment', ${gameName}, ${itemName}, ${itemId}, ${categoryId},
-          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'qr', now() + interval '1 hour'
-        )
-      `;
+    const bigId = Number(sp.get('bigCategoryId') || sp.get('game') || 0);
+    const regionId = sp.get('regionId');
+    if (!bigId) {
+      return NextResponse.json({ error: 'Falta bigCategoryId' }, { status: 400 });
     }
-    const qrUrl = qrFor(market);
-    if (qrUrl) {
-      await db`UPDATE payment_orders SET qr_url = ${qrUrl} WHERE id = ${id}::uuid`;
+
+    const all = await s2t(`/catalog/categories?bigCategoryId=${bigId}&for_ui=true`);
+    let categories = listOf(all);
+
+    const regions = categories
+      .map((c: any) => {
+        const name = String(c.name || '');
+        const region = regionLabel(c);
+        let score = 0;
+        if (/latam/i.test(name) || region === 'LATAM') score += 100;
+        if (/brazil|brasil/i.test(name) || region === 'BR') score += 50;
+        if (/global/i.test(name) || region === 'Global') score += 20;
+        return { id: Number(c.id), name, region, score };
+      })
+      .filter((r: any) => r.id > 0)
+      .sort((a: any, b: any) => b.score - a.score || a.name.localeCompare(b.name));
+
+    if (!regions.length) {
+      return NextResponse.json({ error: 'Sin regiones para este producto.' }, { status: 404 });
     }
-    await notifyTelegram(
-      `💳 <b>Nueva orden QR</b>\n${gameName} ${itemName}\n${local.symbol} ${local.amount} · ${id}`
+
+    let chosen = regionId
+      ? regions.find((r) => String(r.id) === String(regionId))
+      : regions.find((r) => r.region === 'LATAM') || regions[0];
+    if (!chosen) chosen = regions[0];
+
+    const pd = await s2t(`/catalog/subcategories?categoryId=${chosen.id}`);
+    const raw = listOf(pd)
+      .map((p: any) => ({
+        id: Number(p.id),
+        name: String(p.name || ''),
+        description: String(p.description || ''),
+        listPrice: Number(p.list_price ?? p.price ?? p.unit_price ?? 0),
+        productType: String(p.product_type || p.productType || 'topup').toLowerCase(),
+      }))
+      .filter((p: any) => {
+        if (!Number.isFinite(p.id) || p.id <= 0) return false;
+        const t = p.productType;
+        return (
+          t === 'topup' ||
+          t === 'voucher' ||
+          t === 'gift' ||
+          t === 'giftcard' ||
+          t === 'gift_card' ||
+          t === ''
+        );
+      });
+
+    const products = await Promise.all(
+      raw.map(async (p: any) => {
+        let cost = p.listPrice;
+        try {
+          const q = await s2t(`/catalog/subcategory/${p.id}/price`);
+          cost = Number(q?.unit_price ?? q?.price?.unit_price ?? p.listPrice ?? 0);
+        } catch {
+          /* */
+        }
+        const priceUsd = sellPriceUsd(cost, settings.markupUsd);
+        const local = localFromUsd(priceUsd, market, settings.rateBo, settings.rateBr);
+        return {
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          costUsd: cost,
+          priceUsd,
+          priceLocal: local.amount,
+          currencyLocal: local.currency,
+          symbolLocal: local.symbol,
+          region: chosen.region,
+          regionName: chosen.name,
+        };
+      })
     );
+
+    let requirements: any[] = [];
+    try {
+      const rd = await s2t(`/catalog/category/${chosen.id}/requirements`);
+      requirements = listOf(rd);
+    } catch {
+      /* optional */
+    }
+
     return NextResponse.json({
       success: true,
-      order: {
-        id,
-        status: 'pending_payment',
-        priceUsd,
-        localAmount: local.amount,
-        localCurrency: local.currency,
-        symbolLocal: local.symbol,
-        payMethod: 'qr',
-        qrUrl,
-        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      settings: {
+        rateBo: settings.rateBo,
+        rateBr: settings.rateBr,
+        markupUsd: settings.markupUsd,
       },
+      category: { id: chosen.id, name: chosen.name, region: chosen.region },
+      regions,
+      products,
+      requirements,
     });
   } catch (e) {
     const x = safeError(e);
