@@ -4,6 +4,31 @@ import { ensureSchema } from '@/lib/schema';
 import { notifyTelegram } from '@/lib/notify';
 import { safeError } from '@/lib/shop2topup';
 
+async function sendTelegramPhoto(caption: string, dataUrl: string) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chat || !dataUrl.startsWith('data:image')) return false;
+  try {
+    const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!m) return false;
+    const mime = m[1];
+    const b64 = m[2];
+    const bin = Buffer.from(b64, 'base64');
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const form = new FormData();
+    form.append('chat_id', chat);
+    form.append('caption', caption.slice(0, 1024));
+    form.append('photo', new Blob([bin], { type: mime }), `comprobante.${ext}`);
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+      method: 'POST',
+      body: form,
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -46,23 +71,40 @@ export async function POST(
           message: 'La orden ya fue marcada.',
         });
       }
+
+      const proofImage = typeof b.proofImage === 'string' ? b.proofImage : '';
+      if (!proofImage.startsWith('data:image')) {
+        return NextResponse.json(
+          { error: 'Debes subir el comprobante (JPG/PNG) antes de marcar Ya pagué.' },
+          { status: 400 }
+        );
+      }
+
       await db`
         UPDATE payment_orders
         SET status = 'awaiting_confirmation', updated_at = now()
         WHERE id = ${params.id}::uuid
       `;
-      await notifyTelegram(
-        `💰 <b>Cliente marcó YA PAGUÉ</b>\n` +
-          `${order.game_name || ''} · ${order.item_name || ''}\n` +
-          `Jugador: ${order.player_name || order.player_id}\n` +
-          `${order.local_currency || ''} ${order.local_amount || ''} · USD ${order.price_usd}\n` +
-          `Orden: ${params.id}\n` +
-          `Confirma en /admin y envía la recarga.`
-      );
+
+      const caption =
+        `💰 YA PAGUÉ (con comprobante)\n` +
+        `${order.game_name || ''} · ${order.item_name || ''}\n` +
+        `Jugador: ${order.player_name || order.player_id}\n` +
+        `${order.local_currency || ''} ${order.local_amount || ''} · USD ${order.price_usd}\n` +
+        `Método: ${order.pay_method || 'qr'} · País: ${order.pay_country || ''}\n` +
+        `Orden: ${params.id}\n` +
+        `Admin → Aceptar (Shop2TopUp o externo) / Cancelar / No pagó`;
+
+      const photoOk = await sendTelegramPhoto(caption, proofImage);
+      if (!photoOk) {
+        await notifyTelegram(caption + '\n(Comprobante no se pudo reenviar como foto)');
+      }
+
       return NextResponse.json({
         success: true,
         status: 'awaiting_confirmation',
-        message: 'Pago registrado. Estamos verificando…',
+        photoSent: photoOk,
+        message: 'Comprobante recibido. Verificando pago…',
       });
     }
 
