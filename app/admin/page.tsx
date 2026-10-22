@@ -363,7 +363,7 @@ export default function AdminPage() {
                 });
                 const d = await r.json();
                 if (!r.ok) setError(d.error);
-                else setNotice(`Guardado: ${enabledIds.length} productos`);
+                else { setNotice(`Guardado: ${enabledIds.length} productos activos`); setTimeout(refresh, 300); }
               }}
             >
               Guardar catálogo
@@ -404,7 +404,7 @@ export default function AdminPage() {
             });
             const d = await r.json();
             if (!r.ok) setError(d.error);
-            else setNotice('Precios y tipo de cambio guardados');
+            else setNotice(`Guardado: ganancia $${markupUsd} · BO ${rateBo} · BR ${rateBr}`);
           }}
         >
           <h2>Tipo de cambio y ganancia en USD</h2>
