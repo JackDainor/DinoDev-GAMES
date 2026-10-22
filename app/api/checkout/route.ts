@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
 
     const settings = await getSettings();
-    const priceUsd = sellPriceUsd(cost, settings.markupUsd);
+    const priceUsd = sellPriceUsd(cost, settings.markupUsd, itemId, settings.priceOverrides);
     const local = localFromUsd(priceUsd, market, settings.rateBo, settings.rateBr);
     const id = randomUUID();
     const db = sql();
