@@ -117,12 +117,19 @@ export async function POST(req: NextRequest) {
       `;
     }
 
-    const qrUrl = qrFor(market);
+    const qrBo = process.env.QR_URL_BO || null;
+    const qrBr = process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
+    const qrUrl = qrFor(market) || qrBo || qrBr;
     if (qrUrl) {
       await db`UPDATE payment_orders SET qr_url = ${qrUrl} WHERE id = ${id}::uuid`;
     }
+    const who = user
+      ? `Usuario: ${user.username} · ${user.email}${user.whatsapp ? ' · WA ' + user.whatsapp : ''}`
+      : 'Invitado (sin cuenta)';
     await notifyTelegram(
-      `💳 <b>Nueva orden QR</b>\n${gameName} ${itemName}\n${local.symbol} ${local.amount} · ${id}`
+      `💳 <b>Nueva orden</b>\n${who}\n${gameName} ${itemName}\n` +
+        `${playerName || playerId}\n${local.symbol} ${local.amount} · USD ${priceUsd.toFixed(4)}\n` +
+        `Orden: ${id}`
     );
     return NextResponse.json({
       success: true,
@@ -134,7 +141,13 @@ export async function POST(req: NextRequest) {
         localCurrency: local.currency,
         symbolLocal: local.symbol,
         payMethod: 'qr',
+        payCountry: market,
         qrUrl,
+        qrOptions: {
+          BO: qrBo,
+          BR: qrBr,
+          BINANCE: process.env.NEXT_PUBLIC_BINANCE_PAY_ID || null,
+        },
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
       },
     });
