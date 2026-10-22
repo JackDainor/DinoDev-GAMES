@@ -54,6 +54,10 @@ export async function ensureSchema() {
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS provider_response jsonb`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS expires_at timestamptz`; } catch { /* */ }
 
+    try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS game_slug text`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN game_slug DROP NOT NULL`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN game_slug SET DEFAULT 'game'`; } catch { /* */ }
+
   await db`
     CREATE TABLE IF NOT EXISTS wallet_ledger (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
