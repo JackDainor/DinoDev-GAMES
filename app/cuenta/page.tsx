@@ -69,9 +69,12 @@ export default function CuentaPage() {
         setErr('La imagen debe ser menor a 2.5 MB');
         return;
       }
-      const buf = await proofFile.arrayBuffer();
-      const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-      proofData = `data:${proofFile.type || 'image/jpeg'};base64,${b64}`;
+      proofData = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+        reader.readAsDataURL(proofFile);
+      });
     }
     const r = await fetch('/api/wallet/deposit', {
       method: 'POST',
