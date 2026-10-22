@@ -37,22 +37,23 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Inicia sesión' }, { status: 401 });
     const b = await req.json();
     const amount = Number(b.amount);
-    const txRef = String(b.txRef || '').trim();
     const proofNote = String(b.proofNote || '').trim();
     const proofImage = typeof b.proofImage === 'string' ? b.proofImage : '';
     if (!(amount >= 5)) {
       return NextResponse.json({ error: 'Mínimo 5 USDT' }, { status: 400 });
     }
-    if (!txRef) {
-      return NextResponse.json({ error: 'Indica el TxID / referencia de Binance Pay' }, { status: 400 });
+    if (!proofImage.startsWith('data:image')) {
+      return NextResponse.json(
+        { error: 'Sube la foto del comprobante (JPG/PNG).' },
+        { status: 400 }
+      );
     }
     const db = sql();
-    const noteExtra = proofImage ? ' [con imagen]' : '';
     const rows = await db`
       INSERT INTO wallet_ledger (user_id, amount_usd, kind, status, note, tx_ref, proof_note)
       VALUES (
         ${user.id}::uuid, ${amount}, 'deposit', 'pending',
-        ${'Binance Pay' + noteExtra}, ${txRef}, ${proofNote || null}
+        ${'Binance Pay [con imagen]'}, ${null}, ${proofNote || null}
       )
       RETURNING id, amount_usd::text, status, created_at
     `;
@@ -63,17 +64,13 @@ export async function POST(req: NextRequest) {
       `User: ${user.username} (${user.email})\n` +
       `WhatsApp: ${user.whatsapp || '—'}\n` +
       `Monto: ${amount} USDT\n` +
-      `TxID: ${txRef}\n` +
       (proofNote ? `Nota: ${proofNote}\n` : '') +
       `Ledger: ${dep.id}\n` +
       `Admin → Depósitos USDT → Aprobar`;
 
-    let photoOk = false;
-    if (proofImage) {
-      photoOk = await sendTelegramPhoto(msg, proofImage);
-    }
+    const photoOk = await sendTelegramPhoto(msg, proofImage);
     if (!photoOk) {
-      await notifyTelegram(msg + (proofImage ? '\n(Comprobante recibido pero no se pudo reenviar la foto)' : ''));
+      await notifyTelegram(msg + '\n(Comprobante no se pudo reenviar como foto)');
     }
 
     return NextResponse.json({
