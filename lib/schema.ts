@@ -141,6 +141,7 @@ export async function ensureSchema() {
 
   await db`INSERT INTO app_settings (key, value) VALUES ('rate_bo', '12') ON CONFLICT (key) DO NOTHING`;
   await db`INSERT INTO app_settings (key, value) VALUES ('rate_br', '5.5') ON CONFLICT (key) DO NOTHING`;
-  await db`INSERT INTO app_settings (key, value) VALUES ('markup_usd', '0.20') ON CONFLICT (key) DO NOTHING`;
+  await db`INSERT INTO app_settings (key, value) VALUES ('markup_usd', '0') ON CONFLICT (key) DO NOTHING`;
   await db`INSERT INTO app_settings (key, value) VALUES ('enabled_big_category_ids', '[]') ON CONFLICT (key) DO NOTHING`;
+  await db`INSERT INTO app_settings (key, value) VALUES ('price_overrides', '{}') ON CONFLICT (key) DO NOTHING`;
 }

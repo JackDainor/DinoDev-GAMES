@@ -4,8 +4,11 @@ import { ensureSchema } from '@/lib/schema';
 export type AppSettings = {
   rateBo: number;
   rateBr: number;
+  /** @deprecated kept for compatibility; prefer priceOverrides */
   markupUsd: number;
   enabledBigCategoryIds: number[];
+  /** itemId (subcategory) -> sell price USD */
+  priceOverrides: Record<string, number>;
 };
 
 export async function getSettings(): Promise<AppSettings> {
@@ -30,11 +33,25 @@ export async function getSettings(): Promise<AppSettings> {
     enabled = [];
   }
 
+  let priceOverrides: Record<string, number> = {};
+  try {
+    const parsed = JSON.parse(m.price_overrides || '{}');
+    if (parsed && typeof parsed === 'object') {
+      for (const [k, v] of Object.entries(parsed)) {
+        const n = Number(v);
+        if (Number.isFinite(n) && n >= 0) priceOverrides[String(k)] = n;
+      }
+    }
+  } catch {
+    priceOverrides = {};
+  }
+
   return {
     rateBo: Math.max(0.01, Number(m.rate_bo) || 12),
     rateBr: Math.max(0.01, Number(m.rate_br) || 5.5),
     markupUsd: Math.max(0, Number(m.markup_usd) || 0),
     enabledBigCategoryIds: enabled,
+    priceOverrides,
   };
 }
 
@@ -44,6 +61,7 @@ export async function setSettings(
     rateBr: number;
     markupUsd: number;
     enabledBigCategoryIds: number[];
+    priceOverrides: Record<string, number>;
   }>
 ) {
   await ensureSchema();
@@ -70,10 +88,30 @@ export async function setSettings(
       .filter((n) => Number.isFinite(n) && n > 0);
     await put('enabled_big_category_ids', JSON.stringify(ids));
   }
+  if (partial.priceOverrides != null) {
+    const clean: Record<string, number> = {};
+    for (const [k, v] of Object.entries(partial.priceOverrides)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) clean[String(k)] = Math.round(n * 10000) / 10000;
+    }
+    await put('price_overrides', JSON.stringify(clean));
+  }
 }
 
-export function sellPriceUsd(costUsd: number, markupUsd: number) {
-  return Math.round((costUsd + markupUsd) * 10000) / 10000;
+/** Final sell USD: override if set, else Shop2TopUp cost (+ legacy markup if any). */
+export function sellPriceUsd(
+  costUsd: number,
+  markupUsd: number,
+  itemId?: number,
+  overrides?: Record<string, number>
+) {
+  if (itemId != null && overrides) {
+    const o = overrides[String(itemId)];
+    if (o != null && Number.isFinite(o)) {
+      return Math.round(o * 10000) / 10000;
+    }
+  }
+  return Math.round((costUsd + (markupUsd || 0)) * 10000) / 10000;
 }
 
 export function localFromUsd(usd: number, market: string, rateBo: number, rateBr: number) {
