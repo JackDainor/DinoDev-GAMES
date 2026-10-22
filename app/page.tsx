@@ -12,10 +12,15 @@ type HistOrder = {
   player_id?: string; player_name?: string; price_usd?: string;
   local_amount?: string; local_currency?: string; created_at?: string;
 };
+type PayOrder = {
+  id: string; status: string; priceUsd: number; localAmount?: number;
+  localCurrency?: string; symbolLocal?: string; payMethod?: string;
+  qrUrl?: string | null; expiresAt?: string;
+};
 
 const STATUS: Record<string, string> = {
   pending_payment: 'Esperando pago',
-  awaiting_confirmation: 'Verificando / En cola',
+  awaiting_confirmation: 'Verificando pago…',
   paid: 'Pagado',
   processing: 'Enviando…',
   completed: 'Completado ✓',
@@ -40,6 +45,7 @@ export default function Home() {
   const [playerId, setPlayerId] = useState('');
   const [player, setPlayer] = useState<any>(null);
   const [category, setCategory] = useState<{ id: number; name: string; region: string } | null>(null);
+  const [payOrder, setPayOrder] = useState<PayOrder | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -65,7 +71,7 @@ export default function Home() {
     })();
   }, []);
 
-  const apiMarket = market === 'BINANCE' ? 'BO' : market; // precios locales usan BO/BR; binance paga en USD
+  const apiMarket = market === 'BINANCE' ? 'BO' : market;
 
   const loadProducts = useCallback(async (g: Game, mkt: string, rid?: number | null) => {
     setLoading(true);
@@ -73,6 +79,7 @@ export default function Home() {
     setProducts([]);
     setSelected(null);
     setPlayer(null);
+    setPayOrder(null);
     try {
       const q = new URLSearchParams({ bigCategoryId: String(g.bigCategoryId), market: mkt });
       if (rid) q.set('regionId', String(rid));
@@ -133,6 +140,7 @@ export default function Home() {
     setBusy(true);
     setError('');
     setNotice('');
+    setPayOrder(null);
     try {
       const r = await fetch('/api/validate', {
         method: 'POST',
@@ -142,7 +150,7 @@ export default function Home() {
       const d = await r.json();
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo validar');
       setPlayer(d.player);
-      setNotice(`Jugador: ${d.player.player_name}${d.player.region ? ` · Región ${d.player.region}` : ''}`);
+      setNotice(`Jugador: ${d.player.player_name}${d.player.region ? ` · ${d.player.region}` : ''}`);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -155,7 +163,8 @@ export default function Home() {
     setBusy(true);
     setError('');
     try {
-      const method = market === 'BINANCE' || payMethod === 'wallet' ? (user ? 'wallet' : 'qr') : payMethod;
+      const method =
+        market === 'BINANCE' && user ? 'wallet' : payMethod === 'wallet' && user ? 'wallet' : 'qr';
       const r = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -168,19 +177,41 @@ export default function Home() {
           itemName: product.name,
           regionLabel: product.region || category.region,
           payCountry: market === 'BINANCE' ? 'BO' : market,
-          payMethod: market === 'BINANCE' && user ? 'wallet' : method,
+          payMethod: method,
           costUsd: product.costUsd,
         }),
       });
       const d = await r.json();
       if (!r.ok || !d.success) throw new Error(d.error || 'Error al crear orden');
       setNotice(d.message || 'Orden creada');
+      if (d.order) setPayOrder(d.order);
       if (d.order?.id) rememberOrder(d.order.id);
       await loadHistory();
       if (user) {
         const me = await fetch('/api/auth/me').then((x) => x.json());
         if (me.user) setUser(me.user);
       }
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function claimPaid(orderId: string) {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await fetch(`/api/checkout/${orderId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'claim_paid' }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo registrar');
+      setNotice(d.message || 'Pago registrado. Verificando…');
+      if (payOrder?.id === orderId) setPayOrder({ ...payOrder, status: 'awaiting_confirmation' });
+      await loadHistory();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -239,7 +270,6 @@ export default function Home() {
                 <a href="/register" onClick={() => setMenuOpen(false)}>Crear cuenta</a>
               </>
             )}
-            <a href="/admin" onClick={() => setMenuOpen(false)}>Admin</a>
           </aside>
         </>
       )}
@@ -247,7 +277,7 @@ export default function Home() {
       <section className="hero">
         <img className="hero-logo" src="/logo.jpg" alt="DinoDev GAMES" />
         <h1>Juega más.<br /><span style={{ color: 'var(--accent)' }}>Paga sin complicaciones.</span></h1>
-        <p>Recargas y gift cards. Elige Bolivia, Brasil o Binance Pay, verifica tu cuenta y listo.</p>
+        <p>Recargas y gift cards. Bolivia, Brasil o Binance Pay.</p>
       </section>
 
       <section id="recargar">
@@ -261,9 +291,7 @@ export default function Home() {
           {games.map((g) => (
             <button key={g.bigCategoryId} type="button" className={`game-tab ${game?.bigCategoryId === g.bigCategoryId ? 'active' : ''}`} onClick={() => setGame(g)}>
               <span className="game-cover">
-                <img
-                  src={`/${g.slug}.jpg`}
-                  alt={g.name}
+                <img src={`/${g.slug}.jpg`} alt={g.name}
                   onError={(e) => {
                     const img = e.currentTarget;
                     if (!img.dataset.fb) {
@@ -297,7 +325,7 @@ export default function Home() {
           <div className="products">
             {products.map((p) => (
               <button key={p.id} type="button" className={`product ${selected === p.id ? 'selected' : ''}`}
-                onClick={() => { setSelected(p.id); setPlayer(null); }}>
+                onClick={() => { setSelected(p.id); setPlayer(null); setPayOrder(null); }}>
                 <div>{p.name}</div>
                 <div className="price-usd">USD {Number(p.priceUsd).toFixed(2)}</div>
                 {market !== 'BINANCE' && (
@@ -311,27 +339,63 @@ export default function Home() {
 
         <section className="panel">
           <h2>{fieldLabel}</h2>
-          <p className="muted">Puedes escribir ID numérico o username según el juego/gift card. No pedimos contraseña.</p>
+          <p className="muted">ID numérico o username según el juego. No pedimos contraseña.</p>
           <label>
             {fieldLabel}
             <input type="text" inputMode="text" autoCapitalize="none" autoCorrect="off" spellCheck={false}
               value={playerId} onChange={(e) => setPlayerId(e.target.value)} placeholder="ID o usuario" />
           </label>
           <button type="button" className="btn" disabled={busy} onClick={validate}>Verificar cuenta</button>
-          {player && product && (
+
+          {player && product && !payOrder && (
             <div style={{ marginTop: 12 }}>
               <p className="muted">✓ {player.player_name}</p>
-              <p><strong>USD {Number(product.priceUsd).toFixed(4)}</strong>
+              <p>
+                <strong>USD {Number(product.priceUsd).toFixed(4)}</strong>
                 {market !== 'BINANCE' && <> · {product.symbolLocal} {Number(product.priceLocal).toFixed(2)}</>}
               </p>
-              {user ? (
-                <button type="button" className="btn primary" disabled={busy} onClick={() => buy('wallet')}>
+              {user && (
+                <button type="button" className="btn primary" disabled={busy} onClick={() => buy('wallet')} style={{ marginRight: 8 }}>
                   Pagar con billetera ({Number(user.balance_usd).toFixed(2)} USD)
                 </button>
-              ) : (
-                <p className="muted"><a href="/login">Inicia sesión</a> para billetera / Binance, o <a href="/register">regístrate</a>.</p>
               )}
-              <button type="button" className="btn" style={{ marginLeft: 8 }} disabled={busy} onClick={() => buy('qr')}>Crear orden</button>
+              <button type="button" className="btn primary" disabled={busy} onClick={() => buy('qr')}>
+                Pagar con QR / crear orden
+              </button>
+              {!user && (
+                <p className="muted" style={{ marginTop: 8 }}>
+                  <a href="/login">Inicia sesión</a> para billetera / Binance, o <a href="/register">regístrate</a>.
+                </p>
+              )}
+            </div>
+          )}
+
+          {payOrder && (
+            <div style={{ marginTop: 14 }}>
+              <p className="muted">Orden: <code>{payOrder.id}</code></p>
+              <p><span className="st">{STATUS[payOrder.status] || payOrder.status}</span></p>
+              <p>
+                <strong>USD {Number(payOrder.priceUsd).toFixed(4)}</strong>
+                {payOrder.localAmount != null && <> · {payOrder.symbolLocal || payOrder.localCurrency} {payOrder.localAmount}</>}
+              </p>
+              {payOrder.qrUrl && payOrder.status === 'pending_payment' && (
+                <div style={{ margin: '10px 0' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={payOrder.qrUrl} alt="QR de pago" style={{ maxWidth: 220, borderRadius: 12, background: '#fff', padding: 8 }} />
+                  <p className="muted">Escanea el QR y paga el monto exacto. Tienes 1 hora.</p>
+                  <a className="btn" href={payOrder.qrUrl} download={`QR-${payOrder.id.slice(0, 8)}.png`} target="_blank" rel="noreferrer">
+                    Descargar QR
+                  </a>
+                </div>
+              )}
+              {payOrder.status === 'pending_payment' && (
+                <button type="button" className="btn primary" disabled={busy} onClick={() => claimPaid(payOrder.id)}>
+                  Ya pagué
+                </button>
+              )}
+              {payOrder.status === 'awaiting_confirmation' && (
+                <p className="muted">Estamos verificando tu pago. El admin enviará la recarga pronto.</p>
+              )}
             </div>
           )}
         </section>
@@ -340,23 +404,28 @@ export default function Home() {
       <section className="panel" id="como">
         <h2>Cómo funciona</h2>
         <ol className="steps">
-          <li>1. Elige país o Binance Pay y el juego / gift card.</li>
-          <li>2. Escoge la región del paquete (debe coincidir con tu cuenta).</li>
+          <li>1. Elige país o Binance Pay y el juego.</li>
+          <li>2. Región del paquete (por defecto LATAM cuando exista).</li>
           <li>3. Verifica tu ID o username.</li>
-          <li>4. Paga con billetera (USDT) o crea la orden para que el admin confirme.</li>
-          <li>5. Seguimos tu pedido en el historial de este dispositivo.</li>
+          <li>4. Paga con QR o billetera y pulsa <strong>Ya pagué</strong>.</li>
+          <li>5. El admin confirma y envía la recarga.</li>
         </ol>
       </section>
 
       <section className="panel" id="historial">
         <h2>Historial en este dispositivo</h2>
-        <p className="muted">Se guarda en tu navegador. Si validaste un ID, también buscamos por ese ID.</p>
+        <p className="muted">También buscamos por el ID que escribiste.</p>
         <button type="button" className="btn" onClick={loadHistory}>Actualizar historial</button>
         {hist.map((o) => (
           <div key={o.id} className="hist-item">
             <span className="st">{STATUS[o.status] || o.status}</span>
             <strong>{o.game_name} · {o.item_name}</strong>
             <div className="muted">{o.player_name || o.player_id} · {o.local_currency} {o.local_amount} · USD {o.price_usd}</div>
+            {o.status === 'pending_payment' && (
+              <button type="button" className="btn primary" style={{ marginTop: 6 }} disabled={busy} onClick={() => claimPaid(o.id)}>
+                Ya pagué
+              </button>
+            )}
             <small className="muted">{o.id}</small>
           </div>
         ))}
@@ -369,13 +438,11 @@ export default function Home() {
         <div>Recargas · Bolivia · Brasil · Binance Pay</div>
         <div style={{ marginTop: 8 }}>
           <a href={`https://wa.me/${WA}`} target="_blank" rel="noreferrer">WhatsApp soporte</a>
-          {' · '}
-          <a href="/admin">Admin</a>
         </div>
         <div style={{ marginTop: 8 }}>© {new Date().getFullYear()} DinoDev GAMES</div>
       </footer>
 
-      <a className="wa-float" href={`https://wa.me/${WA}?text=${encodeURIComponent('Hola DinoDev GAMES, necesito ayuda')}`} target="_blank" rel="noreferrer" aria-label="WhatsApp">WA</a>
+      <a className="wa-float" href={`https://wa.me/${WA}?text=${encodeURIComponent('Hola DinoDev GAMES, necesito ayuda')}`} target="_blank" rel="noreferrer">WA</a>
     </main>
   );
 }
