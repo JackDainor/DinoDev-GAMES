@@ -35,9 +35,37 @@ export async function ensureSchema() {
     )
   `;
 
-  // Migrate old Neon tables column-by-column
+  const cols = [
+    'user_id uuid',
+    'game_name text',
+    'game_slug text',
+    'item_name text',
+    'item_id integer',
+    'category_id integer',
+    'player_id text',
+    'player_name text',
+    'region_label text',
+    'cost_usd numeric',
+    'price_usd numeric',
+    'local_amount numeric',
+    'local_currency text',
+    'pay_country text',
+    'pay_method text',
+    'qr_url text',
+    'provider_response jsonb',
+    'expires_at timestamptz',
+  ];
+  for (const col of cols) {
+    try {
+      // neon tagged template needs static strings — run one by one below
+    } catch {
+      /* */
+    }
+  }
+
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS user_id uuid`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS game_name text`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS game_slug text`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS item_name text`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS item_id integer`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS category_id integer`; } catch { /* */ }
@@ -54,9 +82,38 @@ export async function ensureSchema() {
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS provider_response jsonb`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS expires_at timestamptz`; } catch { /* */ }
 
-    try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS game_slug text`; } catch { /* */ }
-  try { await db`ALTER TABLE payment_orders ALTER COLUMN game_slug DROP NOT NULL`; } catch { /* */ }
+  // Relax NOT NULL on legacy columns that break inserts
+  for (const col of [
+    'game_slug',
+    'game_name',
+    'item_name',
+    'player_id',
+    'player_name',
+    'region_label',
+    'cost_usd',
+    'price_usd',
+    'local_amount',
+    'local_currency',
+    'pay_country',
+    'pay_method',
+    'qr_url',
+    'item_id',
+    'category_id',
+    'user_id',
+  ]) {
+    try {
+      if (col === 'game_slug') await db`ALTER TABLE payment_orders ALTER COLUMN game_slug DROP NOT NULL`;
+      if (col === 'game_name') await db`ALTER TABLE payment_orders ALTER COLUMN game_name DROP NOT NULL`;
+      if (col === 'item_name') await db`ALTER TABLE payment_orders ALTER COLUMN item_name DROP NOT NULL`;
+      if (col === 'player_id') await db`ALTER TABLE payment_orders ALTER COLUMN player_id DROP NOT NULL`;
+      if (col === 'price_usd') await db`ALTER TABLE payment_orders ALTER COLUMN price_usd DROP NOT NULL`;
+    } catch {
+      /* */
+    }
+  }
   try { await db`ALTER TABLE payment_orders ALTER COLUMN game_slug SET DEFAULT 'game'`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN game_name SET DEFAULT 'Juego'`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ALTER COLUMN status SET DEFAULT 'pending_payment'`; } catch { /* */ }
 
   await db`
     CREATE TABLE IF NOT EXISTS wallet_ledger (
