@@ -22,7 +22,14 @@ export async function GET(req: NextRequest) {
       ORDER BY created_at DESC
       LIMIT 100
     `;
-    return NextResponse.json({ success: true, orders: rows });
+    let balance: string | null = null;
+    try {
+      const acc = await s2t('/account');
+      const data = acc.data || acc.account || acc;
+      balance = String(data.balance ?? data.wallet_balance ?? data.credit ?? '');
+      if (balance === 'undefined' || balance === 'null') balance = null;
+    } catch { /* */ }
+    return NextResponse.json({ success: true, orders: rows, balance });
   } catch (e) {
     const x = safeError(e);
     return NextResponse.json(x, { status: x.status || 500 });
