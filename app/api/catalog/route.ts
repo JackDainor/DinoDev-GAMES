@@ -78,12 +78,18 @@ export async function GET(req: NextRequest) {
     let categories = listOf(all);
 
     const regions = categories
-      .map((c: any) => ({
-        id: Number(c.id),
-        name: String(c.name || ''),
-        region: regionLabel(c),
-      }))
-      .filter((r: any) => r.id > 0);
+      .map((c: any) => {
+        const name = String(c.name || '');
+        const region = regionLabel(c);
+        // Prefer LATAM, then Brazil, then Global
+        let score = 0;
+        if (/latam/i.test(name) || region === 'LATAM') score += 100;
+        if (/brazil|brasil/i.test(name) || region === 'BR') score += 50;
+        if (/global/i.test(name) || region === 'Global') score += 20;
+        return { id: Number(c.id), name, region, score };
+      })
+      .filter((r: any) => r.id > 0)
+      .sort((a: any, b: any) => b.score - a.score || a.name.localeCompare(b.name));
 
     if (!regions.length) {
       return NextResponse.json({ error: 'Sin regiones para este producto.' }, { status: 404 });
@@ -91,7 +97,7 @@ export async function GET(req: NextRequest) {
 
     let chosen = regionId
       ? regions.find((r) => String(r.id) === String(regionId))
-      : regions[0];
+      : regions.find((r) => r.region === 'LATAM') || regions[0];
     if (!chosen) chosen = regions[0];
 
     const pd = await s2t(`/catalog/subcategories?categoryId=${chosen.id}`);
