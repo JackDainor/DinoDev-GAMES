@@ -35,6 +35,7 @@ export default function AdminPage() {
   const [creditId, setCreditId] = useState('');
   const [creditAmt, setCreditAmt] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [loadingAdmin, setLoadingAdmin] = useState(false);
 
   useEffect(() => {
     try {
@@ -59,6 +60,7 @@ export default function AdminPage() {
   const refresh = useCallback(async () => {
     if (!secret.trim()) return;
     setError('');
+    setLoadingAdmin(true);
     try {
       if (tab === 'orders') {
         const r = await fetch('/api/admin/orders', { headers: { 'x-admin-secret': secret.trim() } });
@@ -104,6 +106,8 @@ export default function AdminPage() {
       }
     } catch (e: any) {
       setError(e.message);
+    } finally {
+      setLoadingAdmin(false);
     }
   }, [secret, tab]);
 
@@ -245,6 +249,11 @@ export default function AdminPage() {
 
       {error && <div className="alert error">{error}</div>}
       {notice && <div className="alert ok">{notice}</div>}
+      {loadingAdmin && (
+        <div className="alert ok" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="spinner" /> Cargando datos del admin…
+        </div>
+      )}
 
       {tab === 'orders' && (
         <>
@@ -283,7 +292,52 @@ export default function AdminPage() {
                   disabled={busyId === o.id}
                   onClick={() => fulfill(o.id)}
                 >
-                  {busyId === o.id ? 'Enviando…' : 'Aceptar y enviar diamantes'}
+                  {busyId === o.id ? 'Enviando…' : 'Aceptar · Shop2TopUp'}
+                </button>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={busyId === o.id}
+                  onClick={async () => {
+                    setBusyId(o.id);
+                    try {
+                      const r = await fetch('/api/admin/orders', {
+                        method: 'POST',
+                        headers: headers(),
+                        body: JSON.stringify({ id: o.id, action: 'fulfill_manual' }),
+                      });
+                      const d = await r.json();
+                      if (!r.ok) setError(d.error || 'Error');
+                      else {
+                        setNotice('Marcado completado (recarga externa)');
+                        refresh();
+                      }
+                    } finally {
+                      setBusyId('');
+                    }
+                  }}
+                >
+                  Aceptar · externo
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busyId === o.id}
+                  onClick={async () => {
+                    setBusyId(o.id);
+                    try {
+                      await fetch('/api/admin/orders', {
+                        method: 'POST',
+                        headers: headers(),
+                        body: JSON.stringify({ id: o.id, action: 'not_paid' }),
+                      });
+                      refresh();
+                    } finally {
+                      setBusyId('');
+                    }
+                  }}
+                >
+                  No pagó
                 </button>
                 <button type="button" className="btn" disabled={busyId === o.id} onClick={() => cancelOrder(o.id)}>
                   Cancelar
