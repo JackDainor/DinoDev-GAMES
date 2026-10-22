@@ -20,16 +20,18 @@ type HistOrder = {
 type PayOrder = {
   id: string; status: string; priceUsd: number; localAmount?: number;
   localCurrency?: string; symbolLocal?: string; qrUrl?: string | null;
+  qrOptions?: { BO?: string | null; BR?: string | null; BINANCE?: string | null };
+  payCountry?: string;
 };
 
 const STATUS: Record<string, string> = {
-  pending_payment: 'Esperando pago',
-  awaiting_confirmation: 'Verificando pago…',
-  completed: 'Completado ✓',
-  expired: 'Expirado',
+  pending_payment: 'Pendiente',
+  awaiting_confirmation: 'Verificando pago',
+  completed: 'Completado',
   cancelled: 'Cancelado',
-  not_paid: 'No pagado',
-  failed: 'Falló el envío',
+  not_paid: 'No pagó',
+  expired: 'Expirado',
+  failed: 'Falló',
 };
 
 const WA = '5511966019490';
@@ -51,13 +53,14 @@ export default function Home() {
   const [player, setPlayer] = useState<any>(null);
   const [category, setCategory] = useState<{ id: number; name: string; region: string } | null>(null);
   const [payOrder, setPayOrder] = useState<PayOrder | null>(null);
+  const [payTab, setPayTab] = useState<'BO' | 'BR' | 'BINANCE'>('BO');
+  const [proofByOrder, setProofByOrder] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [hist, setHist] = useState<HistOrder[]>([]);
-  const [rates, setRates] = useState({ rateBo: 12, rateBr: 5.5 });
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -73,7 +76,6 @@ export default function Home() {
         let d: any = {};
         try { d = text ? JSON.parse(text) : {}; } catch { throw new Error('Respuesta inválida del catálogo'); }
         if (!r.ok) throw new Error(d.error || `No se pudo cargar juegos (${r.status})`);
-        if (d.settings) setRates({ rateBo: d.settings.rateBo, rateBr: d.settings.rateBr });
         if (d.games?.length) {
           setGames(d.games);
           setGame(d.games[0]);
@@ -104,7 +106,6 @@ export default function Home() {
       let d: any = {};
       try { d = text ? JSON.parse(text) : {}; } catch { throw new Error('Respuesta inválida del catálogo'); }
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
-      if (d.settings) setRates({ rateBo: d.settings.rateBo, rateBr: d.settings.rateBr });
       setRegions(d.regions || []);
       setRegionId(d.category?.id ?? null);
       setCategory(d.category || null);
@@ -123,8 +124,7 @@ export default function Home() {
   }, [game, apiMarket, loadProducts]);
 
   const product = useMemo(() => products.find((p) => p.id === selected), [products, selected]);
-
-  const needsPlayerFields = requirements.some((r) => r.required) || requirements.length > 0;
+  const needsPlayerFields = requirements.length > 0;
   const isGiftLike = useMemo(() => {
     const name = `${game?.name || ''} ${product?.name || ''} ${product?.productType || ''}`;
     return /gift|voucher|card|codigo|razer|steam|roblox|telegram|apple|google/i.test(name);
@@ -160,9 +160,22 @@ export default function Home() {
 
   useEffect(() => {
     loadHistory();
-    const t = setInterval(loadHistory, 20000);
+    const t = setInterval(loadHistory, 15000);
     return () => clearInterval(t);
   }, []);
+
+  async function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      if (file.size > 2_500_000) {
+        reject(new Error('La imagen debe ser menor a 2.5 MB'));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      reader.readAsDataURL(file);
+    });
+  }
 
   async function validate() {
     if (!selected || !category) return setError('Elige un paquete');
@@ -172,26 +185,20 @@ export default function Home() {
     setNotice('');
     setPayOrder(null);
     try {
-      // Gift cards without required fields: skip provider validate
       if (!needsPlayerFields && isGiftLike) {
         const label = Object.values(fields).filter(Boolean).join(' · ') || 'Gift card';
         setPlayer({ player_id: label || 'gift', player_name: label || 'Gift card', region: '' });
-        setNotice('Listo para comprar (gift card / código).');
+        setNotice('Listo para comprar.');
         return;
       }
-
       const playerId =
         fields.player_id ||
         fields.username ||
         fields.user_id ||
-        fields.userid ||
         fields.email ||
         Object.values(fields).find(Boolean) ||
         '';
-
-      if (!playerId.trim()) {
-        throw new Error('Completa los datos pedidos para este producto.');
-      }
+      if (!String(playerId).trim()) throw new Error('Completa los datos pedidos para este producto.');
 
       const r = await fetch('/api/validate', {
         method: 'POST',
@@ -199,16 +206,14 @@ export default function Home() {
         body: JSON.stringify({
           itemId: selected,
           categoryId: category.id,
-          playerId: playerId.trim(),
+          playerId: String(playerId).trim(),
           ...fields,
         }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo validar');
       setPlayer(d.player);
-      setNotice(
-        `Cuenta: ${d.player.player_name}${d.player.region ? ` · ${d.player.region}` : ''}`
-      );
+      setNotice(`Cuenta: ${d.player.player_name}${d.player.region ? ` · ${d.player.region}` : ''}`);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -224,7 +229,11 @@ export default function Home() {
     setError('');
     try {
       const method =
-        market === 'BINANCE' && user ? 'wallet' : payMethod === 'wallet' && user ? 'wallet' : 'qr';
+        market === 'BINANCE' && user && payMethod === 'wallet'
+          ? 'wallet'
+          : payMethod === 'wallet' && user
+            ? 'wallet'
+            : 'qr';
       const r = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -245,9 +254,14 @@ export default function Home() {
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.success) throw new Error(d.error || 'Error al crear orden');
       setNotice(d.message || 'Orden creada');
-      if (d.order) setPayOrder(d.order);
-      if (d.order?.id) rememberOrder(d.order.id);
-      await loadHistory();
+      if (d.order) {
+        setPayOrder(d.order);
+        setPayTab((d.order.payCountry as any) || market || 'BO');
+      }
+      if (d.order?.id) {
+        rememberOrder(d.order.id);
+        await loadHistory();
+      }
       if (user) {
         const me = await fetch('/api/auth/me').then((x) => x.json()).catch(() => ({}));
         if (me.user) setUser(me.user);
@@ -261,18 +275,23 @@ export default function Home() {
   }
 
   async function claimPaid(orderId: string) {
+    const proof = proofByOrder[orderId];
+    if (!proof) {
+      setError('Sube el comprobante (JPG/PNG) antes de marcar Ya pagué.');
+      return;
+    }
     setBusy(true);
-    setBusyLabel('Registrando pago…');
+    setBusyLabel('Enviando comprobante…');
     setError('');
     try {
       const r = await fetch(`/api/checkout/${orderId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'claim_paid' }),
+        body: JSON.stringify({ action: 'claim_paid', proofImage: proof }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo registrar');
-      setNotice(d.message || 'Pago registrado. Verificando…');
+      setNotice(d.message || 'Comprobante enviado. Verificando pago…');
       if (payOrder?.id === orderId) setPayOrder({ ...payOrder, status: 'awaiting_confirmation' });
       await loadHistory();
     } catch (e: any) {
@@ -283,7 +302,120 @@ export default function Home() {
     }
   }
 
-  const showFieldPanel = !!product;
+  function currentQr(order: PayOrder) {
+    const opts = order.qrOptions || {};
+    if (payTab === 'BO') return opts.BO || order.qrUrl;
+    if (payTab === 'BR') return opts.BR || order.qrUrl;
+    return null;
+  }
+
+  function renderOrderPayBlock(order: PayOrder, compact?: boolean) {
+    const st = order.status;
+    return (
+      <div className={compact ? 'hist-item' : ''} style={compact ? undefined : { marginTop: 14 }}>
+        {!compact && (
+          <>
+            <p className="muted">
+              Orden: <code>{order.id}</code>
+            </p>
+            <p>
+              <span className="st">{STATUS[st] || st}</span>
+            </p>
+            <p>
+              <strong>USD {Number(order.priceUsd).toFixed(4)}</strong>
+              {order.localAmount != null && (
+                <>
+                  {' '}
+                  · {order.symbolLocal || order.localCurrency} {order.localAmount}
+                </>
+              )}
+            </p>
+          </>
+        )}
+
+        {st === 'pending_payment' && (
+          <>
+            <div className="market-row" style={{ marginTop: 8 }}>
+              <button type="button" className={`market-btn ${payTab === 'BO' ? 'active' : ''}`} onClick={() => setPayTab('BO')}>
+                🇧🇴 QR Bolivia
+              </button>
+              <button type="button" className={`market-btn ${payTab === 'BR' ? 'active' : ''}`} onClick={() => setPayTab('BR')}>
+                🇧🇷 QR Brasil
+              </button>
+              <button type="button" className={`market-btn ${payTab === 'BINANCE' ? 'active' : ''}`} onClick={() => setPayTab('BINANCE')}>
+                🟡 Binance Pay
+              </button>
+            </div>
+
+            {payTab === 'BINANCE' ? (
+              <p className="muted" style={{ marginTop: 8 }}>
+                Paga en USDT (Binance Pay)
+                {order.qrOptions?.BINANCE ? (
+                  <>
+                    {' '}
+                    · Pay ID: <strong>{order.qrOptions.BINANCE}</strong>
+                  </>
+                ) : (
+                  ' · usa tu app Binance al contacto indicado en soporte'
+                )}
+                . Monto: <strong>USD {Number(order.priceUsd).toFixed(4)}</strong>
+              </p>
+            ) : currentQr(order) ? (
+              <div style={{ margin: '10px 0' }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={currentQr(order)!}
+                  alt="QR de pago"
+                  style={{ maxWidth: 220, borderRadius: 12, background: '#fff', padding: 8 }}
+                />
+                <p className="muted">Paga el monto exacto. Tienes 1 hora.</p>
+              </div>
+            ) : (
+              <p className="muted">QR no configurado para este país. Usa el otro método o WhatsApp soporte.</p>
+            )}
+
+            <label style={{ marginTop: 8 }}>
+              Comprobante (JPG/PNG) — obligatorio
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/jpg,image/webp"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  try {
+                    const data = await fileToDataUrl(f);
+                    setProofByOrder((m) => ({ ...m, [order.id]: data }));
+                    setNotice('Comprobante listo. Ahora puedes marcar Ya pagué.');
+                  } catch (err: any) {
+                    setError(err.message);
+                  }
+                }}
+              />
+            </label>
+            {proofByOrder[order.id] && <p className="muted">✓ Comprobante cargado</p>}
+
+            <button
+              type="button"
+              className="btn primary"
+              disabled={busy || !proofByOrder[order.id]}
+              onClick={() => claimPaid(order.id)}
+              style={{ marginTop: 8 }}
+            >
+              {busy && busyLabel.includes('comprobante') ? 'Enviando…' : 'Ya pagué'}
+            </button>
+          </>
+        )}
+
+        {st === 'awaiting_confirmation' && (
+          <p className="muted">Verificando pago… El admin confirmará pronto.</p>
+        )}
+        {st === 'completed' && <p className="muted">✓ Completado</p>}
+        {(st === 'cancelled' || st === 'not_paid') && (
+          <p className="muted">{STATUS[st] || st}</p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <main className="wrap">
@@ -308,6 +440,13 @@ export default function Home() {
         </div>
       </header>
 
+      {!user && (
+        <div className="alert ok" style={{ marginTop: 8, fontSize: '0.9rem' }}>
+          💡 Regístrate para que tus recargas sean más seguras y uses billetera USDT.{' '}
+          <a href="/register"><strong>Crear cuenta</strong></a>
+        </div>
+      )}
+
       {menuOpen && (
         <>
           <div className="drawer-backdrop" onClick={() => setMenuOpen(false)} />
@@ -315,8 +454,8 @@ export default function Home() {
             <strong style={{ marginBottom: 8 }}>DinoDev GAMES</strong>
             <a href="/" onClick={() => setMenuOpen(false)}>🏠 Inicio</a>
             <a href="#recargar" onClick={() => setMenuOpen(false)}>🎮 Catálogo</a>
-            <a href="#como" onClick={() => setMenuOpen(false)}>❓ Cómo funciona</a>
             <a href="#historial" onClick={() => setMenuOpen(false)}>📋 Mis pedidos</a>
+            <a href="#como" onClick={() => setMenuOpen(false)}>❓ Cómo funciona</a>
             {user ? (
               <>
                 <a href="/cuenta" onClick={() => setMenuOpen(false)}>👤 Mi cuenta</a>
@@ -438,13 +577,13 @@ export default function Home() {
           </div>
         )}
 
-        {showFieldPanel && (
+        {product && (
           <section className="panel">
             <h2>{isGiftLike ? 'Datos de la compra' : 'Datos de la cuenta'}</h2>
             <p className="muted">
               {isGiftLike
-                ? 'Este producto puede pedir usuario/email o no requerir ID de jugador.'
-                : 'Ingresa el ID o los datos que pide este juego. No pedimos contraseña.'}
+                ? 'Gift card: puede pedir usuario/email o nada.'
+                : 'Ingresa el ID o datos del juego. No pedimos contraseña.'}
             </p>
 
             {requirements.length > 0 ? (
@@ -454,9 +593,7 @@ export default function Home() {
                   {req.select_options?.length ? (
                     <select
                       value={fields[req.field_name] || ''}
-                      onChange={(e) =>
-                        setFields((f) => ({ ...f, [req.field_name]: e.target.value }))
-                      }
+                      onChange={(e) => setFields((f) => ({ ...f, [req.field_name]: e.target.value }))}
                     >
                       <option value="">Elegir…</option>
                       {req.select_options.map((o: any, i: number) => (
@@ -473,28 +610,18 @@ export default function Home() {
                       autoCorrect="off"
                       spellCheck={false}
                       value={fields[req.field_name] || ''}
-                      onChange={(e) =>
-                        setFields((f) => ({ ...f, [req.field_name]: e.target.value }))
-                      }
+                      onChange={(e) => setFields((f) => ({ ...f, [req.field_name]: e.target.value }))}
                       placeholder={req.label || req.field_name}
                     />
                   )}
                 </label>
               ))
             ) : (
-              <p className="muted">Este producto no pide ID de jugador. Puedes continuar.</p>
+              <p className="muted">Este producto no pide ID. Puedes continuar.</p>
             )}
 
             <button type="button" className="btn" disabled={busy} onClick={validate}>
-              {busy && busyLabel.includes('Verif') ? (
-                <>
-                  <span className="spinner" style={{ marginRight: 8 }} /> Verificando…
-                </>
-              ) : needsPlayerFields || !isGiftLike ? (
-                'Verificar cuenta'
-              ) : (
-                'Continuar'
-              )}
+              {needsPlayerFields || !isGiftLike ? 'Verificar cuenta' : 'Continuar'}
             </button>
 
             {player && product && !payOrder && (
@@ -517,72 +644,23 @@ export default function Home() {
                     onClick={() => buy('wallet')}
                     style={{ marginRight: 8 }}
                   >
-                    {busy && busyLabel.includes('orden') ? 'Creando…' : `Pagar con billetera (${Number(user.balance_usd).toFixed(2)} USD)`}
+                    Pagar con billetera ({Number(user.balance_usd).toFixed(2)} USD)
                   </button>
                 )}
                 <button type="button" className="btn primary" disabled={busy} onClick={() => buy('qr')}>
-                  {busy && busyLabel.includes('orden') ? 'Creando…' : 'Pagar con QR / crear orden'}
+                  Crear orden y pagar
                 </button>
               </div>
             )}
 
-            {payOrder && (
-              <div style={{ marginTop: 14 }}>
-                <p className="muted">
-                  Orden: <code>{payOrder.id}</code>
-                </p>
-                <p>
-                  <span className="st">{STATUS[payOrder.status] || payOrder.status}</span>
-                </p>
-                <p>
-                  <strong>USD {Number(payOrder.priceUsd).toFixed(4)}</strong>
-                  {payOrder.localAmount != null && (
-                    <>
-                      {' '}
-                      · {payOrder.symbolLocal || payOrder.localCurrency} {payOrder.localAmount}
-                    </>
-                  )}
-                </p>
-                {payOrder.qrUrl && payOrder.status === 'pending_payment' && (
-                  <div style={{ margin: '10px 0' }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={payOrder.qrUrl}
-                      alt="QR de pago"
-                      style={{ maxWidth: 220, borderRadius: 12, background: '#fff', padding: 8 }}
-                    />
-                    <p className="muted">Escanea el QR y paga el monto exacto. Tienes 1 hora.</p>
-                  </div>
-                )}
-                {payOrder.status === 'pending_payment' && (
-                  <button
-                    type="button"
-                    className="btn primary"
-                    disabled={busy}
-                    onClick={() => claimPaid(payOrder.id)}
-                  >
-                    {busy && busyLabel.includes('pago') ? 'Registrando…' : 'Ya pagué'}
-                  </button>
-                )}
-              </div>
-            )}
+            {payOrder && renderOrderPayBlock(payOrder)}
           </section>
         )}
       </section>
 
-      <section className="panel" id="como">
-        <h2>Cómo funciona</h2>
-        <ol className="steps">
-          <li>1. Elige país o Binance Pay y el juego / gift card.</li>
-          <li>2. Región del paquete (LATAM por defecto cuando exista).</li>
-          <li>3. Completa solo los datos que pide ese producto.</li>
-          <li>4. Paga y pulsa <strong>Ya pagué</strong>.</li>
-          <li>5. El admin confirma y entrega la recarga o código.</li>
-        </ol>
-      </section>
-
       <section className="panel" id="historial">
-        <h2>Historial en este dispositivo</h2>
+        <h2>Mis pedidos</h2>
+        <p className="muted">Se guardan en este dispositivo. Incluye órdenes como invitado.</p>
         <button type="button" className="btn" onClick={loadHistory} disabled={busy}>
           Actualizar historial
         </button>
@@ -595,20 +673,40 @@ export default function Home() {
             <div className="muted">
               {o.player_name || o.player_id} · {o.local_currency} {o.local_amount} · USD {o.price_usd}
             </div>
-            {o.status === 'pending_payment' && (
-              <button
-                type="button"
-                className="btn primary"
-                style={{ marginTop: 6 }}
-                disabled={busy}
-                onClick={() => claimPaid(o.id)}
-              >
-                Ya pagué
-              </button>
+            {o.status === 'pending_payment' &&
+              renderOrderPayBlock(
+                {
+                  id: o.id,
+                  status: o.status,
+                  priceUsd: Number(o.price_usd || 0),
+                  localAmount: o.local_amount != null ? Number(o.local_amount) : undefined,
+                  localCurrency: o.local_currency,
+                  qrUrl: null,
+                  qrOptions: {
+                    BO: process.env.NEXT_PUBLIC_QR_URL_BO || null,
+                    BR: process.env.NEXT_PUBLIC_QR_URL_BR || null,
+                    BINANCE: process.env.NEXT_PUBLIC_BINANCE_PAY_ID || null,
+                  },
+                },
+                true
+              )}
+            {o.status === 'awaiting_confirmation' && (
+              <p className="muted">Verificando pago…</p>
             )}
           </div>
         ))}
         {!hist.length && <p className="muted">Sin pedidos aún.</p>}
+      </section>
+
+      <section className="panel" id="como">
+        <h2>Cómo funciona</h2>
+        <ol className="steps">
+          <li>1. Elige juego / gift card y región.</li>
+          <li>2. Completa los datos que pide el producto.</li>
+          <li>3. Crea la orden y paga con QR Bs, QR Br o Binance.</li>
+          <li>4. Sube el comprobante y pulsa <strong>Ya pagué</strong>.</li>
+          <li>5. El admin verifica y completa la recarga.</li>
+        </ol>
       </section>
 
       <footer className="footer">
