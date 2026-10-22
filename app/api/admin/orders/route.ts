@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     const rows = await db`
       SELECT id, status, game_name, item_name, player_id, player_name, region_label,
              cost_usd::text, price_usd::text, local_amount::text, local_currency,
-             pay_method, pay_country, created_at, expires_at
+             pay_method, pay_country, created_at, expires_at, user_id
       FROM payment_orders
       ORDER BY created_at DESC
       LIMIT 100
@@ -28,7 +28,9 @@ export async function GET(req: NextRequest) {
       const data = acc.data || acc.account || acc;
       balance = String(data.balance ?? data.wallet_balance ?? data.credit ?? '');
       if (balance === 'undefined' || balance === 'null') balance = null;
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
     return NextResponse.json({ success: true, orders: rows, balance });
   } catch (e) {
     const x = safeError(e);
@@ -48,10 +50,14 @@ export async function POST(req: NextRequest) {
     const order = rows[0];
     if (!order) return NextResponse.json({ error: 'Orden no encontrada' }, { status: 404 });
 
-    if (action === 'cancel' || action === 'not_paid') {
-      const st = action === 'not_paid' ? 'not_paid' : 'cancelled';
-      await db`UPDATE payment_orders SET status = ${st}, updated_at = now() WHERE id = ${id}::uuid`;
-      return NextResponse.json({ success: true, status: st });
+    if (action === 'cancel') {
+      await db`UPDATE payment_orders SET status = 'cancelled', updated_at = now() WHERE id = ${id}::uuid`;
+      return NextResponse.json({ success: true, status: 'cancelled' });
+    }
+
+    if (action === 'not_paid') {
+      await db`UPDATE payment_orders SET status = 'not_paid', updated_at = now() WHERE id = ${id}::uuid`;
+      return NextResponse.json({ success: true, status: 'not_paid' });
     }
 
     if (action === 'claim_paid' || action === 'mark_paid') {
@@ -59,12 +65,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, status: 'awaiting_confirmation' });
     }
 
+    // Mark completed without Shop2TopUp (third-party topup)
+    if (action === 'fulfill_manual' || action === 'accept_external') {
+      await db`
+        UPDATE payment_orders SET
+          status = 'completed',
+          provider_response = ${JSON.stringify({ manual: true, note: b.note || 'external' })}::jsonb,
+          updated_at = now()
+        WHERE id = ${id}::uuid
+      `;
+      await notifyTelegram(
+        `✅ Completado (externo) #${id.slice(0, 8)}\n${order.game_name || ''} ${order.item_name || ''}\n${order.player_name || order.player_id}`
+      );
+      return NextResponse.json({ success: true, status: 'completed', manual: true });
+    }
+
     if (action === 'fulfill') {
       const itemId = Number(order.item_id);
       const playerId = String(order.player_id || '');
       const cost = order.cost_usd != null ? String(order.cost_usd) : undefined;
 
-      let body: any = {
+      const body: any = {
         order_id: id,
         sub_category_id: itemId,
         quantity: 1,
@@ -89,12 +110,11 @@ export async function POST(req: NextRequest) {
         `;
         await notifyTelegram(
           finalStatus === 'completed'
-            ? `✅ Enviado #${id.slice(0, 8)} ${order.game_name || ''} ${order.item_name || ''}`
-            : `❌ Falló envío #${id.slice(0, 8)}`
+            ? `✅ Enviado Shop2TopUp #${id.slice(0, 8)} ${order.game_name || ''} ${order.item_name || ''}`
+            : `❌ Falló Shop2TopUp #${id.slice(0, 8)}`
         );
         return NextResponse.json({ success: true, status: finalStatus, provider: out });
       } catch (e: any) {
-        // Mark completed manually if provider fails but admin confirms
         if (b.forceComplete) {
           await db`UPDATE payment_orders SET status = 'completed', updated_at = now() WHERE id = ${id}::uuid`;
           return NextResponse.json({ success: true, status: 'completed', forced: true });
