@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       const q = await s2t(`/catalog/subcategory/${itemId}/price`);
       cost = Number(q?.unit_price ?? q?.price?.unit_price ?? cost);
     } catch {
-      /* use client cost */
+      /* */
     }
 
     const settings = await getSettings();
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     const qrBr = process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
     const qrUrl = qrFor(market) || qrBo || qrBr;
 
-    // WALLET
+    // Includes legacy columns usd_price / local_price used by older Neon schema
     if (payMethod === 'wallet') {
       if (!user) {
         return NextResponse.json({ error: 'Inicia sesión para pagar con billetera.' }, { status: 401 });
@@ -76,19 +76,23 @@ export async function POST(req: NextRequest) {
           VALUES (${user.id}::uuid, ${-priceUsd}, 'purchase', 'completed', ${'Orden ' + id})
         `;
       } catch {
-        /* ledger optional */
+        /* */
       }
 
       await db`
         INSERT INTO payment_orders (
           id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
-          player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, qr_url, expires_at
+          player_id, player_name, region_label,
+          cost_usd, price_usd, usd_price,
+          local_amount, local_price, local_currency,
+          pay_country, pay_method, qr_url, expires_at
         ) VALUES (
           ${id}::uuid, 'awaiting_confirmation', ${user.id}::uuid,
           ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
-          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'wallet', ${qrUrl},
+          ${playerId}, ${playerName}, ${regionLabel},
+          ${cost}, ${priceUsd}, ${priceUsd},
+          ${local.amount}, ${local.amount}, ${local.currency},
+          ${market}, 'wallet', ${qrUrl},
           now() + interval '1 hour'
         )
       `;
@@ -114,19 +118,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // QR / guest or registered
     const userId = user?.id || null;
     if (userId) {
       await db`
         INSERT INTO payment_orders (
           id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
-          player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, qr_url, expires_at
+          player_id, player_name, region_label,
+          cost_usd, price_usd, usd_price,
+          local_amount, local_price, local_currency,
+          pay_country, pay_method, qr_url, expires_at
         ) VALUES (
           ${id}::uuid, 'pending_payment', ${userId}::uuid,
           ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
-          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'qr', ${qrUrl},
+          ${playerId}, ${playerName}, ${regionLabel},
+          ${cost}, ${priceUsd}, ${priceUsd},
+          ${local.amount}, ${local.amount}, ${local.currency},
+          ${market}, 'qr', ${qrUrl},
           now() + interval '1 hour'
         )
       `;
@@ -134,13 +141,17 @@ export async function POST(req: NextRequest) {
       await db`
         INSERT INTO payment_orders (
           id, status, game_name, game_slug, item_name, item_id, category_id,
-          player_id, player_name, region_label, cost_usd, price_usd,
-          local_amount, local_currency, pay_country, pay_method, qr_url, expires_at
+          player_id, player_name, region_label,
+          cost_usd, price_usd, usd_price,
+          local_amount, local_price, local_currency,
+          pay_country, pay_method, qr_url, expires_at
         ) VALUES (
           ${id}::uuid, 'pending_payment',
           ${gameName}, ${gameSlug}, ${itemName}, ${itemId}, ${categoryId},
-          ${playerId}, ${playerName}, ${regionLabel}, ${cost}, ${priceUsd},
-          ${local.amount}, ${local.currency}, ${market}, 'qr', ${qrUrl},
+          ${playerId}, ${playerName}, ${regionLabel},
+          ${cost}, ${priceUsd}, ${priceUsd},
+          ${local.amount}, ${local.amount}, ${local.currency},
+          ${market}, 'qr', ${qrUrl},
           now() + interval '1 hour'
         )
       `;
