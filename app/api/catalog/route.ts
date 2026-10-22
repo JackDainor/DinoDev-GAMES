@@ -3,6 +3,7 @@ import { s2t, safeError } from '@/lib/shop2topup';
 import { getSettings, localFromUsd, sellPriceUsd, slugify, type AppSettings } from '@/lib/settings';
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
 
 function listOf(body: any): any[] {
   if (Array.isArray(body?.data)) return body.data;
@@ -47,25 +48,21 @@ export async function GET(req: NextRequest) {
     const market = (sp.get('market') || 'BO').toUpperCase();
 
     if (sp.get('list') === 'games') {
-      const body = await s2t('/catalog/big-categories?for_ui=true');
-      let all = listOf(body);
-
-      // Fallback endpoints if first response empty
+      let all = listOf(await s2t('/catalog/big-categories?for_ui=true'));
       if (!all.length) {
         try {
-          const body2 = await s2t('/catalog/big-categories');
-          all = listOf(body2);
+          all = listOf(await s2t('/catalog/big-categories'));
         } catch {
           /* */
         }
       }
 
-      const enabled = settings.enabledBigCategoryIds || [];
+      const enabled = (settings.enabledBigCategoryIds || []).map(Number);
       if (enabled.length > 0) {
-        const allow = new Set(enabled.map(Number));
+        const allow = new Set(enabled);
         const filtered = all.filter((c: any) => allow.has(Number(c.id)));
-        // If admin selection yields nothing, show full catalog instead of empty store
-        if (filtered.length > 0) all = filtered;
+        // Prefer admin selection; only fall back to all if filter is empty by mistake
+        all = filtered.length ? filtered : all;
       }
 
       const games = all
@@ -85,15 +82,19 @@ export async function GET(req: NextRequest) {
         })
         .filter(Boolean);
 
-      return NextResponse.json({
-        success: true,
-        settings: {
-          rateBo: settings.rateBo,
-          rateBr: settings.rateBr,
-          markupUsd: settings.markupUsd,
+      return NextResponse.json(
+        {
+          success: true,
+          settings: {
+            rateBo: settings.rateBo,
+            rateBr: settings.rateBr,
+            markupUsd: settings.markupUsd,
+            enabledCount: enabled.length,
+          },
+          games,
         },
-        games,
-      });
+        { headers: { 'Cache-Control': 'no-store' } }
+      );
     }
 
     const bigId = Number(sp.get('bigCategoryId') || sp.get('game') || 0);
@@ -102,8 +103,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Falta bigCategoryId' }, { status: 400 });
     }
 
-    const all = await s2t(`/catalog/categories?bigCategoryId=${bigId}&for_ui=true`);
-    let categories = listOf(all);
+    const categories = listOf(
+      await s2t(`/catalog/categories?bigCategoryId=${bigId}&for_ui=true`)
+    );
 
     const regions = categories
       .map((c: any) => {
@@ -122,10 +124,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Sin regiones para este producto.' }, { status: 404 });
     }
 
-    let chosen = regionId
-      ? regions.find((r) => String(r.id) === String(regionId))
-      : regions.find((r) => r.region === 'LATAM') || regions[0];
-    if (!chosen) chosen = regions[0];
+    let chosen =
+      (regionId ? regions.find((r) => String(r.id) === String(regionId)) : null) ||
+      regions.find((r) => r.region === 'LATAM') ||
+      regions[0];
 
     const pd = await s2t(`/catalog/subcategories?categoryId=${chosen.id}`);
     const raw = listOf(pd)
@@ -164,6 +166,7 @@ export async function GET(req: NextRequest) {
           id: p.id,
           name: p.name,
           description: p.description,
+          productType: p.productType,
           costUsd: cost,
           priceUsd,
           priceLocal: local.amount,
@@ -178,23 +181,50 @@ export async function GET(req: NextRequest) {
     let requirements: any[] = [];
     try {
       const rd = await s2t(`/catalog/category/${chosen.id}/requirements`);
-      requirements = listOf(rd);
+      requirements = listOf(rd).map((r: any) => ({
+        field_name: String(r.field_name || r.name || r.field || r.key || 'player_id'),
+        label: String(r.label || r.title || r.field_name || r.name || 'Campo'),
+        data_type: String(r.data_type || r.type || 'text'),
+        required: r.required !== false,
+        select_options: Array.isArray(r.select_options) ? r.select_options : [],
+      }));
     } catch {
       /* optional */
     }
 
-    return NextResponse.json({
-      success: true,
-      settings: {
-        rateBo: settings.rateBo,
-        rateBr: settings.rateBr,
-        markupUsd: settings.markupUsd,
+    // Heuristic: gift/voucher often only needs username or nothing
+    if (!requirements.length) {
+      const isGift = products.some((p) =>
+        /gift|voucher|card|codigo|code/i.test(p.productType + p.name)
+      );
+      if (!isGift) {
+        requirements = [
+          {
+            field_name: 'player_id',
+            label: 'ID del jugador',
+            data_type: 'text',
+            required: true,
+            select_options: [],
+          },
+        ];
+      }
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        settings: {
+          rateBo: settings.rateBo,
+          rateBr: settings.rateBr,
+          markupUsd: settings.markupUsd,
+        },
+        category: { id: chosen.id, name: chosen.name, region: chosen.region },
+        regions,
+        products,
+        requirements,
       },
-      category: { id: chosen.id, name: chosen.name, region: chosen.region },
-      regions,
-      products,
-      requirements,
-    });
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
   } catch (e) {
     const x = safeError(e);
     return NextResponse.json(x, { status: x.status || 500 });
