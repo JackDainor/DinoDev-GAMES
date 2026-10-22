@@ -1,3 +1,4 @@
+import { ensureSchema } from '@/lib/schema';
 import { NextRequest, NextResponse } from 'next/server';
 import { s2t, safeError } from '@/lib/shop2topup';
 import { getSettings, setSettings } from '@/lib/settings';
