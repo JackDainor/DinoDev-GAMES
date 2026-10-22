@@ -5,6 +5,31 @@ import { getSessionUser } from '@/lib/auth';
 import { notifyTelegram, waMeLink } from '@/lib/notify';
 import { safeError } from '@/lib/shop2topup';
 
+async function sendTelegramPhoto(caption: string, dataUrl: string) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chat || !dataUrl.startsWith('data:image')) return false;
+  try {
+    const m = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+    if (!m) return false;
+    const mime = m[1];
+    const b64 = m[2];
+    const bin = Buffer.from(b64, 'base64');
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+    const form = new FormData();
+    form.append('chat_id', chat);
+    form.append('caption', caption.slice(0, 1024));
+    form.append('photo', new Blob([bin], { type: mime }), `comprobante.${ext}`);
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+      method: 'POST',
+      body: form,
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     await ensureSchema();
@@ -40,34 +65,25 @@ export async function POST(req: NextRequest) {
       `Monto: ${amount} USDT\n` +
       `TxID: ${txRef}\n` +
       (proofNote ? `Nota: ${proofNote}\n` : '') +
-      (proofImage ? `Comprobante: imagen adjunta en solicitud\n` : '') +
       `Ledger: ${dep.id}\n` +
       `Admin → Depósitos USDT → Aprobar`;
 
-    await notifyTelegram(msg);
-
-    // Optional: send photo to telegram if bot supports it
-    if (proofImage.startsWith('data:image') && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-      try {
-        const token = process.env.TELEGRAM_BOT_TOKEN!;
-        const chat = process.env.TELEGRAM_CHAT_ID!;
-        // Telegram needs multipart for photo; send as document caption via sendMessage already done
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chat,
-            text: `📎 Comprobante solicitado para ledger ${dep.id} (${user.username}). Revisa en admin o pide la imagen por WhatsApp.`,
-          }),
-        });
-      } catch { /* */ }
+    let photoOk = false;
+    if (proofImage) {
+      photoOk = await sendTelegramPhoto(msg, proofImage);
+    }
+    if (!photoOk) {
+      await notifyTelegram(msg + (proofImage ? '\n(Comprobante recibido pero no se pudo reenviar la foto)' : ''));
     }
 
     return NextResponse.json({
       success: true,
       deposit: dep,
+      photoSent: photoOk,
       adminWhatsAppLink: waMeLink(adminWa, msg),
-      message: 'Solicitud enviada. El admin verificará y acreditará tu saldo.',
+      message: photoOk
+        ? 'Solicitud enviada con comprobante a Telegram.'
+        : 'Solicitud enviada. El admin verificará y acreditará tu saldo.',
     });
   } catch (e) {
     const x = safeError(e);
