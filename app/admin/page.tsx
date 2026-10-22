@@ -30,6 +30,10 @@ export default function AdminPage() {
   const [rateBo, setRateBo] = useState(12);
   const [rateBr, setRateBr] = useState(5.5);
   const [markupUsd, setMarkupUsd] = useState(0);
+  const [priceModalGame, setPriceModalGame] = useState<{ id: number; name: string } | null>(null);
+  const [priceProducts, setPriceProducts] = useState<any[]>([]);
+  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
+  const [loadingPrices, setLoadingPrices] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [deposits, setDeposits] = useState<any[]>([]);
   const [creditId, setCreditId] = useState('');
@@ -447,38 +451,181 @@ export default function AdminPage() {
       )}
 
       {tab === 'rates' && (
-        <form
-          className="panel"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const r = await fetch('/api/admin/catalog', {
-              method: 'POST',
-              headers: headers(),
-              body: JSON.stringify({ rateBo, rateBr, markupUsd }),
-            });
-            const d = await r.json();
-            if (!r.ok) setError(d.error);
-            else setNotice(`Guardado: ganancia $${markupUsd} · BO ${rateBo} · BR ${rateBr}`);
-          }}
-        >
-          <h2>Tipo de cambio y ganancia en USD</h2>
-          <p className="muted">Precio venta = costo Shop2TopUp + ganancia fija en USD.</p>
-          <label>
-            Ganancia por pack en USD (pon 0 para mismo precio que Shop2TopUp)
-            <input type="number" step="0.01" min={0} value={markupUsd} onChange={(e) => setMarkupUsd(Number(e.target.value))} />
-          </label>
-          <label>
-            TC Bolivia (Bs por 1 USD)
-            <input type="number" step="0.01" min={0.01} value={rateBo} onChange={(e) => setRateBo(Number(e.target.value))} />
-          </label>
-          <label>
-            TC Brasil (R$ por 1 USD)
-            <input type="number" step="0.01" min={0.01} value={rateBr} onChange={(e) => setRateBr(Number(e.target.value))} />
-          </label>
-          <button type="submit" className="btn primary">
-            Guardar
-          </button>
-        </form>
+        <div>
+          <form
+            className="panel"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const r = await fetch('/api/admin/prices', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({ rateBo, rateBr }),
+              });
+              const d = await r.json();
+              if (!r.ok) setError(d.error);
+              else setNotice(`TC guardado: BO ${rateBo} · BR ${rateBr}`);
+            }}
+          >
+            <h2>Tipo de cambio</h2>
+            <p className="muted">1 USD = TC. El precio local = precio USD × TC.</p>
+            <label>
+              TC Bolivia (Bs por 1 USD)
+              <input type="number" step="0.01" min={0.01} value={rateBo} onChange={(e) => setRateBo(Number(e.target.value))} />
+            </label>
+            <label>
+              TC Brasil (R$ por 1 USD)
+              <input type="number" step="0.01" min={0.01} value={rateBr} onChange={(e) => setRateBr(Number(e.target.value))} />
+            </label>
+            <button type="submit" className="btn primary">
+              Guardar tipo de cambio
+            </button>
+          </form>
+
+          <div className="panel">
+            <h2>Precios USD por juego</h2>
+            <p className="muted">
+              Solo juegos activos en la tienda. Toca un juego, edita el USD de cada pack y guarda.
+              Si no editas un pack, usa el precio de Shop2TopUp.
+            </p>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {cats
+                .filter((c) => enabledIds.includes(c.id))
+                .map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="admin-card"
+                    style={{ textAlign: 'left', cursor: 'pointer', width: '100%' }}
+                    onClick={async () => {
+                      setPriceModalGame({ id: c.id, name: c.name });
+                      setLoadingPrices(true);
+                      setPriceProducts([]);
+                      setPriceDraft({});
+                      try {
+                        const r = await fetch(`/api/admin/prices?bigCategoryId=${c.id}`, {
+                          headers: headers(),
+                        });
+                        const d = await r.json();
+                        if (!r.ok) throw new Error(d.error || 'Error');
+                        setPriceProducts(d.products || []);
+                        const draft: Record<string, string> = {};
+                        for (const p of d.products || []) {
+                          draft[String(p.id)] = String(p.priceUsd);
+                        }
+                        setPriceDraft(draft);
+                      } catch (e: any) {
+                        setError(e.message);
+                      } finally {
+                        setLoadingPrices(false);
+                      }
+                    }}
+                  >
+                    <strong>{c.name}</strong>
+                    <small className="muted"> · editar precios USD</small>
+                  </button>
+                ))}
+              {!cats.filter((c) => enabledIds.includes(c.id)).length && (
+                <p className="muted">Activa juegos en la pestaña Juegos / Gift cards primero.</p>
+              )}
+            </div>
+          </div>
+
+          {priceModalGame && (
+            <div
+              className="drawer-backdrop"
+              style={{ display: 'grid', placeItems: 'center', padding: 12 }}
+              onClick={() => setPriceModalGame(null)}
+            >
+              <div
+                className="panel"
+                style={{ maxWidth: 520, width: '100%', maxHeight: '90vh', overflow: 'auto' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2>{priceModalGame.name}</h2>
+                <p className="muted">Edita solo USD. Bs y R$ se calculan con el TC.</p>
+                {loadingPrices && (
+                  <p className="muted">
+                    <span className="spinner" /> Cargando packs…
+                  </p>
+                )}
+                {!loadingPrices &&
+                  priceProducts.map((p) => {
+                    const usd = Number(priceDraft[String(p.id)] ?? p.priceUsd) || 0;
+                    const bs = Math.round(usd * rateBo * 100) / 100;
+                    const brl = Math.round(usd * rateBr * 100) / 100;
+                    return (
+                      <div
+                        key={p.id}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 90px',
+                          gap: 8,
+                          alignItems: 'center',
+                          borderBottom: '1px solid rgba(255,255,255,0.08)',
+                          padding: '8px 0',
+                        }}
+                      >
+                        <div>
+                          <strong style={{ fontSize: 14 }}>{p.name}</strong>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            S2T: ${Number(p.costUsd).toFixed(4)}
+                            {p.hasOverride ? ' · personalizado' : ''}
+                            <br />
+                            Bs {bs.toFixed(2)} · R$ {brl.toFixed(2)}
+                          </div>
+                        </div>
+                        <label style={{ margin: 0 }}>
+                          USD
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            value={priceDraft[String(p.id)] ?? ''}
+                            onChange={(e) =>
+                              setPriceDraft((d) => ({ ...d, [String(p.id)]: e.target.value }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    );
+                  })}
+                {!loadingPrices && !priceProducts.length && (
+                  <p className="muted">Sin packs para este juego.</p>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={loadingPrices}
+                    onClick={async () => {
+                      const overrides: Record<string, number> = {};
+                      for (const [k, v] of Object.entries(priceDraft)) {
+                        const n = Number(v);
+                        if (Number.isFinite(n) && n >= 0) overrides[k] = n;
+                      }
+                      const r = await fetch('/api/admin/prices', {
+                        method: 'POST',
+                        headers: headers(),
+                        body: JSON.stringify({ priceOverrides: overrides }),
+                      });
+                      const d = await r.json();
+                      if (!r.ok) setError(d.error || 'Error al guardar');
+                      else {
+                        setNotice('Precios USD guardados');
+                        setPriceModalGame(null);
+                      }
+                    }}
+                  >
+                    Guardar precios USD
+                  </button>
+                  <button type="button" className="btn" onClick={() => setPriceModalGame(null)}>
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {tab === 'users' && (
