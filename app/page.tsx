@@ -223,51 +223,68 @@ export default function Home() {
   }
 
   async function buy(payMethod: 'wallet' | 'qr') {
-    if (!product || !player || !category || !game) return;
+    if (!product || !player || !category || !game) {
+      setError('Primero verifica la cuenta / datos del producto.');
+      return;
+    }
     setBusy(true);
     setBusyLabel('Creando orden…');
     setError('');
+    setNotice('');
     try {
-      const method =
-        market === 'BINANCE' && user && payMethod === 'wallet'
-          ? 'wallet'
-          : payMethod === 'wallet' && user
-            ? 'wallet'
-            : 'qr';
+      const method = payMethod === 'wallet' && user ? 'wallet' : 'qr';
       const r = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           itemId: product.id,
           categoryId: category.id,
-          playerId: player.player_id,
-          playerName: player.player_name,
+          playerId: player.player_id || 'n/a',
+          playerName: player.player_name || player.player_id || 'Jugador',
           gameName: game.name,
           gameSlug: game.slug,
           itemName: product.name,
-          regionLabel: product.region || category.region,
+          regionLabel: product.region || category.region || '',
           payCountry: market === 'BINANCE' ? 'BO' : market,
           payMethod: method,
           costUsd: product.costUsd,
         }),
       });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.success) throw new Error(d.error || 'Error al crear orden');
+      const text = await r.text();
+      let d: any = {};
+      try { d = text ? JSON.parse(text) : {}; } catch { d = { error: text || 'Respuesta inválida' }; }
+      if (!r.ok || !d.success) throw new Error(d.error || `No se pudo crear la orden (${r.status})`);
+
       setNotice(d.message || 'Orden creada');
       if (d.order) {
         setPayOrder(d.order);
         setPayTab((d.order.payCountry as any) || market || 'BO');
-      }
-      if (d.order?.id) {
-        rememberOrder(d.order.id);
-        await loadHistory();
+        if (d.order.id) {
+          rememberOrder(d.order.id);
+          // Optimistic history so guest sees it immediately
+          setHist((prev) => {
+            const row = {
+              id: d.order.id,
+              status: d.order.status,
+              game_name: game.name,
+              item_name: product.name,
+              player_id: player.player_id,
+              player_name: player.player_name,
+              price_usd: String(d.order.priceUsd),
+              local_amount: d.order.localAmount != null ? String(d.order.localAmount) : '',
+              local_currency: d.order.localCurrency || '',
+            };
+            return [row, ...prev.filter((x) => x.id !== d.order.id)];
+          });
+          await loadHistory();
+        }
       }
       if (user) {
         const me = await fetch('/api/auth/me').then((x) => x.json()).catch(() => ({}));
         if (me.user) setUser(me.user);
       }
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message || 'Error al crear la orden');
     } finally {
       setBusy(false);
       setBusyLabel('');
@@ -407,7 +424,11 @@ export default function Home() {
         )}
 
         {st === 'awaiting_confirmation' && (
-          <p className="muted">Verificando pago… El admin confirmará pronto.</p>
+          <p className="muted">
+            {(order as any).payMethod === 'wallet'
+              ? 'Pagado con billetera. El admin enviará la recarga pronto.'
+              : 'Verificando pago… El admin confirmará pronto.'}
+          </p>
         )}
         {st === 'completed' && <p className="muted">✓ Completado</p>}
         {(st === 'cancelled' || st === 'not_paid') && (
@@ -636,20 +657,28 @@ export default function Home() {
                     </>
                   )}
                 </p>
-                {user && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                  {user && (
+                    <button
+                      type="button"
+                      className="btn primary"
+                      disabled={busy}
+                      onClick={() => buy('wallet')}
+                      style={{ flex: '1 1 140px' }}
+                    >
+                      {busy && busyLabel.includes('orden') ? 'Creando…' : `Billetera (${Number(user.balance_usd).toFixed(2)} USD)`}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn primary"
                     disabled={busy}
-                    onClick={() => buy('wallet')}
-                    style={{ marginRight: 8 }}
+                    onClick={() => buy('qr')}
+                    style={{ flex: '1 1 140px' }}
                   >
-                    Pagar con billetera ({Number(user.balance_usd).toFixed(2)} USD)
+                    {busy && busyLabel.includes('orden') ? 'Creando…' : 'Pagar con QR'}
                   </button>
-                )}
-                <button type="button" className="btn primary" disabled={busy} onClick={() => buy('qr')}>
-                  Crear orden y pagar
-                </button>
+                </div>
               </div>
             )}
 
@@ -740,8 +769,12 @@ export default function Home() {
         href={`https://wa.me/${WA}?text=${encodeURIComponent('Hola DinoDev GAMES, necesito ayuda')}`}
         target="_blank"
         rel="noreferrer"
+        aria-label="WhatsApp"
+        title="WhatsApp"
       >
-        WA
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="currentColor" aria-hidden>
+          <path d="M16.01 3C9.39 3 4 8.39 4 15c0 2.11.55 4.09 1.51 5.82L4 29l8.36-1.46A11.9 11.9 0 0 0 16 27c6.63 0 12-5.37 12-12S22.63 3 16.01 3zm0 2c5.51 0 10 4.49 10 10s-4.49 10-10 10c-1.73 0-3.36-.44-4.78-1.22l-.34-.19-4.96.87.9-4.83-.22-.36A9.93 9.93 0 0 1 6 15c0-5.51 4.49-10 10.01-10zm5.56 14.42c-.24-.12-1.43-.7-1.65-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06-.24-.12-1.01-.37-1.93-1.19-.71-.63-1.19-1.42-1.33-1.66-.14-.24-.01-.37.11-.49.11-.11.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.2-.48-.4-.41-.54-.42h-.46c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.69 2.58 4.1 3.62 2.41 1.04 2.41.69 2.84.66.43-.04 1.43-.58 1.63-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28z"/>
+        </svg>
       </a>
     </main>
   );
