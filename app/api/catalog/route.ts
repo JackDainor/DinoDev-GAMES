@@ -29,8 +29,9 @@ function regionLabel(cat: any): string {
 const DEFAULT_SETTINGS: AppSettings = {
   rateBo: 12,
   rateBr: 5.5,
-  markupUsd: 0.2,
+  markupUsd: 0,
   enabledBigCategoryIds: [],
+  priceOverrides: {},
 };
 
 async function safeSettings(): Promise<AppSettings> {
@@ -160,7 +161,7 @@ export async function GET(req: NextRequest) {
         } catch {
           /* */
         }
-        const priceUsd = sellPriceUsd(cost, settings.markupUsd);
+        const priceUsd = sellPriceUsd(cost, settings.markupUsd, p.id, settings.priceOverrides);
         const local = localFromUsd(priceUsd, market, settings.rateBo, settings.rateBr);
         return {
           id: p.id,
