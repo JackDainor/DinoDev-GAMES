@@ -60,8 +60,11 @@ export default function Home() {
     (async () => {
       try {
         const r = await fetch('/api/catalog?list=games');
-        const d = await r.json();
-        if (r.ok && d.games?.length) {
+        const text = await r.text();
+        let d: any = {};
+        try { d = text ? JSON.parse(text) : {}; } catch { throw new Error('Respuesta inválida del catálogo'); }
+        if (!r.ok) throw new Error(d.error || 'No se pudo cargar juegos');
+        if (d.games?.length) {
           setGames(d.games);
           setGame(d.games[0]);
         }
@@ -84,7 +87,9 @@ export default function Home() {
       const q = new URLSearchParams({ bigCategoryId: String(g.bigCategoryId), market: mkt });
       if (rid) q.set('regionId', String(rid));
       const r = await fetch(`/api/catalog?${q}`);
-      const d = await r.json();
+      const text = await r.text();
+      let d: any = {};
+      try { d = text ? JSON.parse(text) : {}; } catch { throw new Error('Respuesta inválida del catálogo'); }
       if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo cargar');
       setRegions(d.regions || []);
       setRegionId(d.category?.id ?? null);
@@ -258,7 +263,7 @@ export default function Home() {
             {user ? (
               <>
                 <a href="/cuenta" onClick={() => setMenuOpen(false)}>👤 Mi cuenta</a>
-                <a href="/cuenta#billetera" onClick={() => setMenuOpen(false)}>💳 Billetera</a>
+                <a href="/billetera" onClick={() => setMenuOpen(false)}>💳 Mi billetera</a>
                 <button type="button" className="linkish" onClick={async () => {
                   await fetch('/api/auth/logout', { method: 'POST' });
                   setUser(null); setMenuOpen(false);
