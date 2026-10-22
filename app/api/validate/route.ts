@@ -11,85 +11,73 @@ function listOf(body: any): any[] {
 export async function POST(req: NextRequest) {
   try {
     const b = await req.json();
-    const itemId = Number(b.itemId);
-    const categoryId = Number(b.categoryId);
-    const playerId = String(b.playerId || b.username || '').trim();
-    if (!itemId || !categoryId || !playerId) {
-      return NextResponse.json({ error: 'Completa el ID o usuario.' }, { status: 400 });
+    // Shop2TopUp requires sub_category_id (product/item id), NOT item_id
+    const subCategoryId = Number(b.itemId ?? b.sub_category_id ?? b.subCategoryId);
+    const categoryId = Number(b.categoryId ?? b.category_id);
+    const playerId = String(b.playerId || b.player_id || b.username || '').trim();
+
+    if (!subCategoryId || !playerId) {
+      return NextResponse.json(
+        { error: 'Falta el paquete o el ID/usuario del jugador.' },
+        { status: 400 }
+      );
     }
 
-    // Build requirements map from category
-    let reqBody: Record<string, string> = { player_id: playerId };
-    try {
-      const rd = await s2t(`/catalog/category/${categoryId}/requirements`);
-      const reqs = listOf(rd);
-      if (reqs.length) {
-        reqBody = {};
-        for (const r of reqs) {
-          const key = String(r.name || r.field || r.key || 'player_id');
-          reqBody[key] = playerId;
-        }
-        if (!Object.keys(reqBody).length) reqBody = { player_id: playerId };
-      }
-    } catch {
-      /* use default player_id */
-    }
-
-    try {
-      const val = await s2t('/player/validate', {
-        method: 'POST',
-        body: JSON.stringify({
-          item_id: itemId,
-          category_id: categoryId,
-          ...reqBody,
-          player_id: playerId,
-          requirements: reqBody,
-        }),
-      });
-      return NextResponse.json({
-        success: true,
-        player: {
-          player_id: playerId,
-          player_name:
-            val.player_name ||
-            val.data?.player_name ||
-            val.player?.player_name ||
-            playerId,
-          region: val.region || val.data?.region || '',
-        },
-      });
-    } catch (e: any) {
-      // Second try: minimal body only
+    // Optional extra fields from category requirements
+    const extra: Record<string, string> = {};
+    if (categoryId) {
       try {
-        const val = await s2t('/player/validate', {
-          method: 'POST',
-          body: JSON.stringify({
-            item_id: itemId,
-            category_id: categoryId,
-            player_id: playerId,
-          }),
-        });
-        return NextResponse.json({
-          success: true,
-          player: {
-            player_id: playerId,
-            player_name: val.player_name || val.data?.player_name || playerId,
-            region: val.region || val.data?.region || '',
-          },
-        });
+        const rd = await s2t(`/catalog/category/${categoryId}/requirements`);
+        const reqs = listOf(rd);
+        for (const r of reqs) {
+          const key = String(r.field_name || r.name || r.field || r.key || '');
+          if (!key || key === 'player_id') continue;
+          // single_select: pick first option if we don't have a value
+          if (Array.isArray(r.select_options) && r.select_options.length) {
+            const opt = r.select_options[0];
+            extra[key] = String(opt.value ?? opt.id ?? opt);
+          } else if (b[key]) {
+            extra[key] = String(b[key]);
+          }
+        }
       } catch {
-        return NextResponse.json(
-          {
-            error:
-              e?.message ||
-              'No se pudo verificar el ID/usuario. Revisa que coincida con la región del paquete.',
-          },
-          { status: 400 }
-        );
+        /* ignore */
       }
     }
+
+    const payload: Record<string, any> = {
+      sub_category_id: subCategoryId,
+      player_id: playerId,
+      ...extra,
+    };
+
+    const val = await s2t('/player/validate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    const data = val.data || val;
+    return NextResponse.json({
+      success: true,
+      player: {
+        player_id: playerId,
+        player_name:
+          data.player_name ||
+          val.player_name ||
+          val.player?.player_name ||
+          playerId,
+        region: data.region || val.region || data.zone_id || '',
+      },
+    });
   } catch (e) {
     const x = safeError(e);
-    return NextResponse.json(x, { status: x.status || 400 });
+    return NextResponse.json(
+      {
+        error:
+          x.error ||
+          'No se pudo verificar el ID/usuario. Revisa región del paquete e inténtalo de nuevo.',
+      },
+      { status: x.status || 400 }
+    );
   }
 }
