@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
              pay_method, pay_country, created_at, expires_at, user_id
       FROM payment_orders
       ORDER BY created_at DESC
-      LIMIT 100
+      LIMIT 400
     `;
     let balance: string | null = null;
     try {
