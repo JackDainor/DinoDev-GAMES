@@ -599,7 +599,7 @@ export default function Home() {
 
       {!user && (
         <div className="alert ok" style={{ marginTop: 8, fontSize: '0.9rem' }}>
-          💡 Regístrate para que tus recargas sean más seguras y uses billetera USDT.{' '}
+          💡 Regístrate para que tus recargas sean más seguras y rápidas.{' '}
           <a href="/register">
             <strong>Crear cuenta</strong>
           </a>
