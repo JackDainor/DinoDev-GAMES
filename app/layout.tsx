@@ -4,6 +4,16 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'DinoDev GAMES — Recargas',
   description: 'Recargas de juegos online · Bolivia y Brasil',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'DinoDev GAMES',
+  },
+  icons: {
+    icon: '/logo.png',
+    apple: '/logo.png',
+  },
 };
 
 export const viewport: Viewport = {

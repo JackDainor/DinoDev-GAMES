@@ -142,3 +142,40 @@ input, select, textarea {
 .badge.ok { background: rgba(61,255,154,0.15); color: var(--accent); }
 .badge.bad { background: rgba(255,107,122,0.15); color: #ff8a96; }
 .badge.wait { background: rgba(255,200,87,0.15); color: #ffc857; }
+
+
+/* Phone country picker */
+.phone-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.phone-dial {
+  flex: 0 0 auto;
+  max-width: 42%;
+  min-width: 7.5rem;
+  border-radius: 12px;
+  border: 1px solid rgba(61, 255, 154, 0.25);
+  background: #0a1a12;
+  color: #e8ffe8;
+  padding: 0.65rem 0.5rem;
+  font-size: 0.9rem;
+}
+.phone-local {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+
+.install-bar {
+  margin: 10px 0 4px;
+}
+.install-bar .install-btn,
+.install-bar .btn {
+  width: 100%;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  box-shadow: 0 0 20px rgba(61, 255, 154, 0.25);
+}
