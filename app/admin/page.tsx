@@ -40,6 +40,7 @@ export default function AdminPage() {
   const [creditAmt, setCreditAmt] = useState('');
   const [busyId, setBusyId] = useState('');
   const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [monthFilter, setMonthFilter] = useState(''); // YYYY-MM or '' = all
 
   useEffect(() => {
     try {
@@ -60,6 +61,38 @@ export default function AdminPage() {
     () => orders.filter((o) => o.status === 'awaiting_confirmation' || o.status === 'pending_payment'),
     [orders]
   );
+
+
+  const historyMonths = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of orders) {
+      if (!o.created_at) continue;
+      const d = new Date(o.created_at);
+      if (Number.isNaN(d.getTime())) continue;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      set.add(key);
+    }
+    return Array.from(set).sort().reverse();
+  }, [orders]);
+
+  const historyOrders = useMemo(() => {
+    if (!monthFilter) return orders;
+    return orders.filter((o) => {
+      if (!o.created_at) return false;
+      const d = new Date(o.created_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return key === monthFilter;
+    });
+  }, [orders, monthFilter]);
+
+  function monthLabel(ym: string) {
+    const [y, m] = ym.split('-').map(Number);
+    const names = [
+      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+    ];
+    return `${names[(m || 1) - 1] || m} ${y}`;
+  }
 
   const refresh = useCallback(async () => {
     if (!secret.trim()) return;
@@ -350,7 +383,21 @@ export default function AdminPage() {
             </div>
           ))}
 
-          <h2>Historial reciente</h2>
+          <h2>Historial de órdenes</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+            <label style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              Mes
+              <select value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)}>
+                <option value="">Todos los meses</option>
+                {historyMonths.map((ym) => (
+                  <option key={ym} value={ym}>
+                    {monthLabel(ym)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="muted">{historyOrders.length} órdenes</span>
+          </div>
           <div className="table-wrap">
             <table className="admin-table">
               <thead>
@@ -363,7 +410,7 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {orders.map((o) => (
+                {historyOrders.map((o) => (
                   <tr key={o.id}>
                     <td>
                       <span
@@ -388,6 +435,13 @@ export default function AdminPage() {
                     <td className="muted">{o.created_at ? new Date(o.created_at).toLocaleString() : '—'}</td>
                   </tr>
                 ))}
+                {!historyOrders.length && (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      Sin órdenes en este período.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
