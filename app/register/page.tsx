@@ -1,13 +1,14 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import PhoneCountryInput from '@/components/PhoneCountryInput';
 
 export default function RegisterPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [whatsapp, setWhatsapp] = useState('');
+  const [whatsapp, setWhatsapp] = useState('591');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -16,10 +17,14 @@ export default function RegisterPage() {
     setBusy(true);
     setError('');
     try {
+      const digits = whatsapp.replace(/\D/g, '');
+      if (digits.length < 10) {
+        throw new Error('WhatsApp incompleto. Elige el país y escribe tu número.');
+      }
       const r = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, username, password, whatsapp }),
+        body: JSON.stringify({ email, username, password, whatsapp: digits }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Error');
@@ -36,11 +41,32 @@ export default function RegisterPage() {
       <form className="form-card" onSubmit={onSubmit}>
         <h1>Crear cuenta</h1>
         {error && <div className="alert error">{error}</div>}
-        <label>Correo<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
-        <label>Username<input value={username} onChange={(e) => setUsername(e.target.value)} required /></label>
-        <label>Contraseña (mín 6)<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} /></label>
-        <label>WhatsApp<input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="5917xxxxxxx" /></label>
-        <button className="btn primary" type="submit" disabled={busy}>{busy ? '…' : 'Registrarme'}</button>
+        <label>
+          Correo
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </label>
+        <label>
+          Username
+          <input value={username} onChange={(e) => setUsername(e.target.value)} required />
+        </label>
+        <label>
+          Contraseña (mín 6)
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={6}
+          />
+        </label>
+        <label>
+          WhatsApp
+          <PhoneCountryInput value={whatsapp} onChange={setWhatsapp} defaultDial="591" required />
+          <small className="muted">Elige el país (bandera) y escribe tu número sin el código.</small>
+        </label>
+        <button className="btn primary" type="submit" disabled={busy}>
+          {busy ? '…' : 'Registrarme'}
+        </button>
         <a href="/login">Ya tengo cuenta</a>
       </form>
     </main>

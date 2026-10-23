@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import PhoneCountryInput from '@/components/PhoneCountryInput';
 import { useRouter } from 'next/navigation';
 
 export default function CuentaPage() {
@@ -81,7 +82,7 @@ export default function CuentaPage() {
           </label>
           <label>
             WhatsApp
-            <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="5917xxxxxxx" />
+            <PhoneCountryInput value={whatsapp || '591'} onChange={setWhatsapp} defaultDial="591" />
           </label>
           <label>
             Nueva contraseña (opcional)

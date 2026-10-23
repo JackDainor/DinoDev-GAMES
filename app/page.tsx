@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import InstallAppButton from '@/components/InstallAppButton';
 
 type Game = { slug: string; name: string; short: string; bigCategoryId: number };
 type Region = { id: number; name: string; region: string };
@@ -599,12 +600,16 @@ export default function Home() {
 
       {!user && (
         <div className="alert ok" style={{ marginTop: 8, fontSize: '0.9rem' }}>
-          💡 Regístrate para que tus recargas sean más seguras y rápidas.{' '}
+          💡 Regístrate para que tus recargas sean más seguras y uses billetera USDT.{' '}
           <a href="/register">
             <strong>Crear cuenta</strong>
           </a>
         </div>
       )}
+      <div className="install-bar">
+        <InstallAppButton className="btn primary install-btn" />
+      </div>
+
 
       {menuOpen && (
         <>
