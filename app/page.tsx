@@ -7,7 +7,7 @@ type Region = { id: number; name: string; region: string };
 type Product = {
   id: number; name: string; priceUsd: number; priceLocal: number;
   symbolLocal: string; currencyLocal: string; region?: string; costUsd?: number;
-  productType?: string;
+  productType?: string; dcEarn?: number; dcCost?: number;
 };
 type ReqField = {
   field_name: string; label: string; data_type: string;
@@ -18,6 +18,7 @@ type HistOrder = {
   player_id?: string; player_name?: string; price_usd?: string;
   local_amount?: string; local_currency?: string; qr_url?: string | null;
   created_at?: string; pay_method?: string; pay_country?: string;
+  dc_cost?: number | null; dc_earned?: number | null;
 };
 
 const STATUS: Record<string, string> = {
@@ -33,7 +34,7 @@ const STATUS: Record<string, string> = {
 
 const WA = '5511966019490';
 const JACK_WA = '59163614354';
-const JACK_MSG = 'Hola Jack Dainor, quisiera un sitio web igual al de DinoDev GAMES';
+const JACK_MSG = 'Hola Jack Dainor, quisiera un sitio web igual al de Dino Games';
 
 // Binance Pay (public)
 const BINANCE_UID = '1075673223';
@@ -68,7 +69,7 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
   const [games, setGames] = useState<Game[]>([]);
   const [game, setGame] = useState<Game | null>(null);
-  const [market, setMarket] = useState<'BO' | 'BR' | 'BINANCE'>('BO');
+  const [market, setMarket] = useState<'BO' | 'BR'>('BO');
   const [regions, setRegions] = useState<Region[]>([]);
   const [regionId, setRegionId] = useState<number | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -87,6 +88,7 @@ export default function Home() {
   const [hist, setHist] = useState<HistOrder[]>([]);
   const [qrMap, setQrMap] = useState<Record<string, any>>({});
   const [receipt, setReceipt] = useState<HistOrder | null>(null);
+  const [payOption, setPayOption] = useState<'qr' | 'dinocoin' | 'wallet'>('qr');
 
   const publicQrBo =
     typeof process !== 'undefined'
@@ -132,7 +134,7 @@ export default function Home() {
     })();
   }, []);
 
-  const apiMarket = market === 'BINANCE' ? 'BO' : market;
+  const apiMarket = market;
 
   const loadProducts = useCallback(async (g: Game, mkt: string, rid?: number | null) => {
     setLoading(true);
@@ -285,7 +287,7 @@ export default function Home() {
     }
   }
 
-  async function buy(payMethod: 'wallet' | 'qr') {
+  async function buy(payMethod: 'wallet' | 'qr' | 'dinocoin') {
     if (!product || !player || !category || !game) {
       setError('Primero verifica la cuenta / datos del producto.');
       return;
@@ -295,7 +297,7 @@ export default function Home() {
     setError('');
     setNotice('');
     try {
-      const method = payMethod === 'wallet' && user ? 'wallet' : 'qr';
+      const method = (payMethod === 'wallet' || payMethod === 'dinocoin') && user ? payMethod : 'qr';
       const r = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -308,7 +310,7 @@ export default function Home() {
           gameSlug: game.slug,
           itemName: product.name,
           regionLabel: product.region || category.region || '',
-          payCountry: market === 'BINANCE' ? 'BO' : market,
+          payCountry: market,
           payMethod: method,
           costUsd: product.costUsd,
         }),
@@ -329,7 +331,7 @@ export default function Home() {
           BR: d.order.qrOptions?.BR,
           qrUrl: d.order.qrUrl,
         });
-        setPayTab((d.order.payCountry as any) || market || 'BO');
+        setPayTab(((d.order.payCountry as any) || market || 'BO') as 'BO' | 'BR');
         setPlayer(null); // collapse form; order lives in history only
         await loadHistory();
         // scroll to history
@@ -393,7 +395,9 @@ export default function Home() {
       `📦 Producto: ${o.item_name || '—'} - ${o.game_name || '—'}\n` +
       `🆔 ID Jugador: ${o.player_id || '—'}\n` +
       `👤 Nick: ${o.player_name || '—'}\n` +
-      `💰 Monto: ${o.local_currency || ''} ${o.local_amount || ''} · USD ${o.price_usd || ''}\n` +
+      (o.pay_method === 'dinocoin' && o.dc_cost
+        ? `🪙 Pagado con: ${o.dc_cost} DinoCoin\n`
+        : `💰 Monto: ${o.local_currency || ''} ${o.local_amount || ''} · USD ${o.price_usd || ''}\n`) +
       `📅 Fecha: ${fecha}\n` +
       `✅ Estado: ¡Entregado con éxito!\n` +
       `🎮 Gracias por preferirnos.\n` +
@@ -413,6 +417,9 @@ export default function Home() {
   function paymentBlock(o: HistOrder) {
     if (o.status !== 'pending_payment') {
       if (o.status === 'awaiting_confirmation') {
+        if (o.pay_method === 'dinocoin') {
+          return <p className="muted">🪙 Pagado con DinoCoin. El admin enviará tu recarga pronto.</p>;
+        }
         return <p className="muted">Verificando pago… El admin confirmará pronto.</p>;
       }
       if (o.status === 'completed') {
@@ -574,17 +581,22 @@ export default function Home() {
           ☰ Menú
         </button>
         <a className="brand" href="/">
-          <img src="/logo.png" alt="DinoDev" />
+          <img src="/logo.png" alt="Dino Games" />
           <span>
-            DinoDev <span style={{ color: 'var(--accent)' }}>GAMES</span>
+            Dino <span style={{ color: 'var(--accent)' }}>Games</span>
             <small>RECARGAS ONLINE</small>
           </span>
         </a>
         <div className="top-links">
           {user ? (
-            <a className="btn" href="/cuenta">
-              {user.username}
-            </a>
+            <>
+              <a className="btn" href="/dinocoin" title="Mis DinoCoin">
+                🪙 {Number(user.dinocoin || 0).toLocaleString('es-BO')}
+              </a>
+              <a className="btn" href="/cuenta">
+                {user.username}
+              </a>
+            </>
           ) : (
             <>
               <a className="btn" href="/login">
@@ -600,7 +612,7 @@ export default function Home() {
 
       {!user && (
         <div className="alert ok" style={{ marginTop: 8, fontSize: '0.9rem' }}>
-          💡 Regístrate para que tus recargas sean más seguras y uses billetera USDT.{' '}
+          🪙 Regístrate gratis y gana <strong>DinoCoin</strong> en cada recarga para canjear por diamantes.{' '}
           <a href="/register">
             <strong>Crear cuenta</strong>
           </a>
@@ -615,7 +627,7 @@ export default function Home() {
         <>
           <div className="drawer-backdrop" onClick={() => setMenuOpen(false)} />
           <aside className="drawer">
-            <strong style={{ marginBottom: 8 }}>DinoDev GAMES</strong>
+            <strong style={{ marginBottom: 8 }}>Dino Games</strong>
             <a href="/" onClick={() => setMenuOpen(false)}>
               🏠 Inicio
             </a>
@@ -632,6 +644,9 @@ export default function Home() {
               <>
                 <a href="/cuenta" onClick={() => setMenuOpen(false)}>
                   👤 Mi cuenta
+                </a>
+                <a href="/dinocoin" onClick={() => setMenuOpen(false)}>
+                  🪙 Mis DinoCoin
                 </a>
                 <a href="/billetera" onClick={() => setMenuOpen(false)}>
                   💳 Mi billetera
@@ -663,13 +678,13 @@ export default function Home() {
       )}
 
       <section className="hero">
-        <img className="hero-logo" src="/logo.png" alt="DinoDev GAMES" />
+        <img className="hero-logo" src="/logo.png" alt="Dino Games" />
         <h1>
           Juega más.
           <br />
           <span style={{ color: 'var(--accent)' }}>Paga sin complicaciones.</span>
         </h1>
-        <p>Recargas y gift cards. Bolivia, Brasil o Binance Pay.</p>
+        <p>Recargas y gift cards para Bolivia y Brasil. Gana DinoCoin en cada recarga.</p>
       </section>
 
       <section id="recargar">
@@ -687,13 +702,6 @@ export default function Home() {
             onClick={() => setMarket('BR')}
           >
             🇧🇷 Brasil · R$
-          </button>
-          <button
-            type="button"
-            className={`market-btn ${market === 'BINANCE' ? 'active' : ''}`}
-            onClick={() => setMarket('BINANCE')}
-          >
-            🟡 Binance Pay · USD
           </button>
         </div>
 
@@ -773,9 +781,12 @@ export default function Home() {
               >
                 <div>{p.name}</div>
                 <div className="price-usd">USD {Number(p.priceUsd).toFixed(2)}</div>
-                {market !== 'BINANCE' && (
-                  <div className="price-local">
-                    {p.symbolLocal} {Number(p.priceLocal).toFixed(2)}
+                <div className="price-local">
+                  {p.symbolLocal} {Number(p.priceLocal).toFixed(2)}
+                </div>
+                {!!p.dcEarn && p.dcEarn > 0 && (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                    +{p.dcEarn} 🪙
                   </div>
                 )}
               </button>
@@ -835,38 +846,106 @@ export default function Home() {
               <div style={{ marginTop: 12 }}>
                 <p className="muted">✓ {player.player_name}</p>
                 <p>
-                  <strong>USD {Number(product.priceUsd).toFixed(4)}</strong>
-                  {market !== 'BINANCE' && (
-                    <>
-                      {' '}
-                      · {product.symbolLocal} {Number(product.priceLocal).toFixed(2)}
-                    </>
-                  )}
+                  <strong>USD {Number(product.priceUsd).toFixed(2)}</strong> · {product.symbolLocal}{' '}
+                  {Number(product.priceLocal).toFixed(2)}
                 </p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                  {user && (
-                    <button
-                      type="button"
-                      className="btn primary"
-                      disabled={busy}
-                      onClick={() => buy('wallet')}
-                      style={{ flex: '1 1 140px' }}
-                    >
-                      {busy && busyLabel.includes('orden')
-                        ? 'Creando…'
-                        : `Billetera (${Number(user.balance_usd).toFixed(2)} USD)`}
-                    </button>
-                  )}
+
+                <h3 style={{ margin: '14px 0 8px', fontSize: '1rem' }}>¿Cómo quieres pagar?</h3>
+                <div style={{ display: 'grid', gap: 8 }}>
                   <button
                     type="button"
-                    className="btn primary"
-                    disabled={busy}
-                    onClick={() => buy('qr')}
-                    style={{ flex: '1 1 140px' }}
+                    className={`market-btn ${payOption === 'qr' ? 'active' : ''}`}
+                    onClick={() => setPayOption('qr')}
+                    style={{ textAlign: 'left' }}
                   >
-                    {busy && busyLabel.includes('orden') ? 'Creando…' : 'Pagar con QR'}
+                    📲 QR / Pix · {product.symbolLocal} {Number(product.priceLocal).toFixed(2)}
                   </button>
+
+                  {user ? (
+                    (() => {
+                      const need = Number(product.dcCost || 0);
+                      const have = Number(user.dinocoin || 0);
+                      const enough = need > 0 && have >= need;
+                      return (
+                        <button
+                          type="button"
+                          className={`market-btn ${payOption === 'dinocoin' ? 'active' : ''}`}
+                          onClick={() => setPayOption('dinocoin')}
+                          disabled={!need}
+                          style={{ textAlign: 'left', opacity: need ? 1 : 0.5 }}
+                        >
+                          🪙 DinoCoin · {need ? `${need.toLocaleString('es-BO')} DC` : 'no disponible'}
+                          <small style={{ display: 'block', opacity: 0.8 }}>
+                            Tienes {have.toLocaleString('es-BO')} DC
+                            {need > 0 && !enough ? ` · te faltan ${(need - have).toLocaleString('es-BO')}` : ''}
+                          </small>
+                        </button>
+                      );
+                    })()
+                  ) : (
+                    <a
+                      className="market-btn"
+                      href="/login"
+                      style={{ textAlign: 'left', textDecoration: 'none', opacity: 0.9 }}
+                    >
+                      🪙 DinoCoin · inicia sesión para usar tus puntos
+                    </a>
+                  )}
+
+                  {user && Number(user.balance_usd) > 0 && (
+                    <button
+                      type="button"
+                      className={`market-btn ${payOption === 'wallet' ? 'active' : ''}`}
+                      onClick={() => setPayOption('wallet')}
+                      style={{ textAlign: 'left' }}
+                    >
+                      💳 Billetera · {Number(user.balance_usd).toFixed(2)} USD disponibles
+                    </button>
+                  )}
                 </div>
+
+                {payOption !== 'dinocoin' && !!product.dcEarn && product.dcEarn > 0 && (
+                  <p className="muted" style={{ marginTop: 8 }}>
+                    {user
+                      ? `Ganarás +${product.dcEarn} DinoCoin cuando se complete la recarga.`
+                      : `Con cuenta ganarías +${product.dcEarn} DinoCoin en esta recarga.`}
+                  </p>
+                )}
+                {payOption === 'dinocoin' && (
+                  <p className="muted" style={{ marginTop: 8 }}>
+                    Los pedidos pagados con DinoCoin no suman DinoCoin nuevos.
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={
+                    busy ||
+                    (payOption === 'dinocoin' &&
+                      (!user ||
+                        !product.dcCost ||
+                        Number(user.dinocoin || 0) < Number(product.dcCost || 0)))
+                  }
+                  onClick={() => {
+                    if (payOption === 'dinocoin') {
+                      const ok = window.confirm(
+                        `¿Canjear ${Number(product.dcCost).toLocaleString('es-BO')} DinoCoin por ${product.name}?`
+                      );
+                      if (!ok) return;
+                    }
+                    buy(payOption);
+                  }}
+                  style={{ marginTop: 12, width: '100%' }}
+                >
+                  {busy && busyLabel.includes('orden')
+                    ? 'Creando…'
+                    : payOption === 'dinocoin'
+                      ? 'Canjear con DinoCoin'
+                      : payOption === 'wallet'
+                        ? 'Pagar con billetera'
+                        : 'Continuar con QR'}
+                </button>
               </div>
             )}
           </section>
@@ -886,7 +965,13 @@ export default function Home() {
               {o.game_name} · {o.item_name}
             </strong>
             <div className="muted">
-              {o.player_name || o.player_id} · {o.local_currency} {o.local_amount} · USD {o.price_usd}
+              {o.player_name || o.player_id} ·{' '}
+              {o.pay_method === 'dinocoin' && o.dc_cost
+                ? `🪙 ${o.dc_cost} DC`
+                : `${o.local_currency} ${o.local_amount} · USD ${o.price_usd}`}
+              {o.status === 'completed' && Number(o.dc_earned) > 0 && (
+                <span style={{ color: 'var(--accent)' }}> · +{o.dc_earned} 🪙</span>
+              )}
             </div>
             <small className="muted">{o.id}</small>
             {paymentBlock(o)}
@@ -900,26 +985,27 @@ export default function Home() {
         <ol className="steps">
           <li>1. Elige juego / gift card y región.</li>
           <li>2. Completa los datos que pide el producto.</li>
-          <li>3. Crea la orden y paga (QR Bs, Pix Br o Binance).</li>
+          <li>3. Elige cómo pagar: QR Bolivia, Pix Brasil o tus DinoCoin.</li>
           <li>
             4. Sube el comprobante y pulsa <strong>Ya pagué</strong>.
           </li>
           <li>5. El admin verifica y completa la recarga.</li>
+          <li>6. Con cuenta, cada recarga completada te da DinoCoin para canjear por diamantes.</li>
         </ol>
       </section>
 
       <footer className="footer">
         <img src="/logo.png" alt="" width={40} height={40} style={{ borderRadius: '50%', marginBottom: 8 }} />
         <div>
-          <strong>DinoDev GAMES</strong>
+          <strong>Dino Games</strong>
         </div>
-        <div>Recargas · Bolivia · Brasil · Binance Pay</div>
+        <div>Recargas · Bolivia · Brasil</div>
         <div style={{ marginTop: 8 }}>
           <a href={`https://wa.me/${WA}`} target="_blank" rel="noreferrer">
             WhatsApp soporte
           </a>
         </div>
-        <div style={{ marginTop: 8 }}>© {new Date().getFullYear()} DinoDev GAMES</div>
+        <div style={{ marginTop: 8 }}>© {new Date().getFullYear()} Dino Games</div>
         <div style={{ marginTop: 12 }}>
           Desarrollado por:{' '}
           <a
@@ -936,7 +1022,7 @@ export default function Home() {
 
       <a
         className="wa-float"
-        href={`https://wa.me/${WA}?text=${encodeURIComponent('Hola DinoDev GAMES, necesito ayuda')}`}
+        href={`https://wa.me/${WA}?text=${encodeURIComponent('Hola Dino Games, necesito ayuda')}`}
         target="_blank"
         rel="noreferrer"
         aria-label="WhatsApp"

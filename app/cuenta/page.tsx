@@ -66,6 +66,7 @@ export default function CuentaPage() {
     <main className="wrap">
       <p style={{ display: 'flex', gap: 12 }}>
         <a href="/">← Tienda</a>
+        <a href="/dinocoin">🪙 Mis DinoCoin</a>
         <a href="/billetera">Mi billetera</a>
       </p>
       <h1>Mi cuenta</h1>

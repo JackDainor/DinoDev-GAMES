@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     await ensureSchema();
     const db = sql();
     const rows = await db`
-      SELECT id, email, username, whatsapp, role, balance_usd::text, active, created_at
+      SELECT id, email, username, whatsapp, role, balance_usd::text, dinocoin, active, created_at
       FROM app_users
       WHERE role IN ('reseller', 'user')
       ORDER BY created_at DESC
@@ -46,6 +46,24 @@ export async function POST(req: NextRequest) {
         VALUES (${id}::uuid, ${amount}, 'credit', 'completed', ${'Admin credit'}, ${String(b.note || '')})
       `;
       const rows = await db`SELECT id, balance_usd::text FROM app_users WHERE id = ${id}::uuid`;
+      return NextResponse.json({ success: true, user: rows[0] });
+    }
+
+    if (action === 'credit_dc') {
+      const id = String(b.id || '');
+      const amount = Math.trunc(Number(b.amount));
+      if (!id || !Number.isFinite(amount) || amount === 0) {
+        return NextResponse.json({ error: 'ID y cantidad (≠ 0)' }, { status: 400 });
+      }
+      const rows = await db`
+        UPDATE app_users SET dinocoin = GREATEST(0, dinocoin + ${amount}), updated_at = now()
+        WHERE id = ${id}::uuid RETURNING id, dinocoin
+      `;
+      if (!rows.length) return NextResponse.json({ error: 'Usuario no encontrado' }, { status: 404 });
+      await db`
+        INSERT INTO dinocoin_ledger (user_id, amount, kind, note)
+        VALUES (${id}::uuid, ${amount}, 'admin', ${String(b.note || 'Ajuste del admin')})
+      `;
       return NextResponse.json({ success: true, user: rows[0] });
     }
 

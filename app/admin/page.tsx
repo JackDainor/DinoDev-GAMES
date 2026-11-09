@@ -30,6 +30,12 @@ export default function AdminPage() {
   const [rateBo, setRateBo] = useState(12);
   const [rateBr, setRateBr] = useState(5.5);
   const [markupUsd, setMarkupUsd] = useState(0);
+  const [dcEnabled, setDcEnabled] = useState(true);
+  const [dcValueUsd, setDcValueUsd] = useState(0.01);
+  const [dcEarnShare, setDcEarnShare] = useState(0.5);
+  const [dcRedeemMarkup, setDcRedeemMarkup] = useState(0.2);
+  const [dcUserId, setDcUserId] = useState('');
+  const [dcAmt, setDcAmt] = useState('');
   const [priceModalGame, setPriceModalGame] = useState<{ id: number; name: string } | null>(null);
   const [priceProducts, setPriceProducts] = useState<any[]>([]);
   const [priceDraft, setPriceDraft] = useState<Record<string, string>>({});
@@ -127,6 +133,10 @@ export default function AdminPage() {
           setRateBo(d.settings.rateBo);
           setRateBr(d.settings.rateBr);
           setMarkupUsd(d.settings.markupUsd);
+          if (d.settings.dcEnabled != null) setDcEnabled(!!d.settings.dcEnabled);
+          if (d.settings.dcValueUsd != null) setDcValueUsd(Number(d.settings.dcValueUsd));
+          if (d.settings.dcEarnShare != null) setDcEarnShare(Number(d.settings.dcEarnShare));
+          if (d.settings.dcRedeemMarkup != null) setDcRedeemMarkup(Number(d.settings.dcRedeemMarkup));
         }
       }
       if (tab === 'users') {
@@ -198,8 +208,8 @@ export default function AdminPage() {
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="DinoDev" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
-          <h1 style={{ margin: 0 }}>DinoDev Admin</h1>
+          <img src="/logo.png" alt="Dino Games" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
+          <h1 style={{ margin: 0 }}>Dino Games Admin</h1>
           <p className="muted" style={{ margin: 0 }}>
             Ingresa la contraseña de operador (<code>OPERATOR_SECRET</code> en Vercel).
           </p>
@@ -236,7 +246,7 @@ export default function AdminPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="" onError={(e) => { (e.target as HTMLImageElement).src = '/logo.svg'; }} />
           <div>
-            <strong>DinoDev Admin</strong>
+            <strong>Dino Games Admin</strong>
             <div className="muted" style={{ fontSize: 12 }}>
               {tabLabel[tab]}
             </div>
@@ -319,7 +329,9 @@ export default function AdminPage() {
                 {o.player_name || '—'} ({o.player_id}) · {o.pay_method}
               </div>
               <div className="muted">
-                {o.local_currency} {o.local_amount} · USD {o.price_usd}
+                {o.pay_method === 'dinocoin'
+                  ? `🪙 ${o.dc_cost} DinoCoin · costo S2T USD ${Number(o.cost_usd || 0).toFixed(2)}`
+                  : `${o.local_currency} ${o.local_amount} · USD ${o.price_usd}`}
               </div>
               <small className="muted">{o.id}</small>
               <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -430,7 +442,8 @@ export default function AdminPage() {
                       <div className="muted">{o.player_id}</div>
                     </td>
                     <td>
-                      {o.local_currency} {o.local_amount}
+                      {o.pay_method === 'dinocoin' ? `🪙 ${o.dc_cost} DC` : `${o.local_currency} ${o.local_amount}`}
+                      {Number(o.dc_earned) > 0 && <div className="muted">+{o.dc_earned} DC</div>}
                     </td>
                     <td className="muted">{o.created_at ? new Date(o.created_at).toLocaleString() : '—'}</td>
                   </tr>
@@ -535,6 +548,46 @@ export default function AdminPage() {
             </button>
           </form>
 
+          <form
+            className="panel"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const r = await fetch('/api/admin/prices', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({ dcEnabled, dcValueUsd, dcEarnShare, dcRedeemMarkup }),
+              });
+              const d = await r.json();
+              if (!r.ok) setError(d.error);
+              else setNotice('DinoCoin guardado');
+            }}
+          >
+            <h2>🪙 DinoCoin</h2>
+            <p className="muted">
+              Ganan: ganancia del pedido × % compartido ÷ valor del DC. Canjean: costo S2T × (1 + recargo) ÷ valor del DC.
+              Mientras el % compartido sea ≤ 100 % y el recargo ≥ 0, nunca pierdes.
+            </p>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="checkbox" checked={dcEnabled} onChange={(e) => setDcEnabled(e.target.checked)} />
+              DinoCoin activado
+            </label>
+            <label>
+              Valor de 1 DinoCoin (USD)
+              <input type="number" step="0.001" min={0.001} max={1} value={dcValueUsd} onChange={(e) => setDcValueUsd(Number(e.target.value))} />
+            </label>
+            <label>
+              % de tu ganancia que se devuelve en DC (0 a 1 · 0.5 = 50 %)
+              <input type="number" step="0.05" min={0} max={1} value={dcEarnShare} onChange={(e) => setDcEarnShare(Number(e.target.value))} />
+            </label>
+            <label>
+              Recargo al canjear (0.2 = el pack cuesta 20 % más en DC)
+              <input type="number" step="0.05" min={0} max={5} value={dcRedeemMarkup} onChange={(e) => setDcRedeemMarkup(Number(e.target.value))} />
+            </label>
+            <button type="submit" className="btn primary">
+              Guardar DinoCoin
+            </button>
+          </form>
+
           <div className="panel">
             <h2>Precios USD por juego</h2>
             <p className="muted">
@@ -607,6 +660,13 @@ export default function AdminPage() {
                     const usd = Number(priceDraft[String(p.id)] ?? p.priceUsd) || 0;
                     const bs = Math.round(usd * rateBo * 100) / 100;
                     const brl = Math.round(usd * rateBr * 100) / 100;
+                    const cost = Number(p.costUsd) || 0;
+                    const profit = Math.round((usd - cost) * 10000) / 10000;
+                    const earn =
+                      dcEnabled && profit > 0 && cost > 0
+                        ? Math.floor((profit * dcEarnShare) / dcValueUsd + 1e-9)
+                        : 0;
+                    const redeem = cost > 0 ? Math.ceil((cost * (1 + dcRedeemMarkup)) / dcValueUsd - 1e-9) : 0;
                     return (
                       <div
                         key={p.id}
@@ -626,6 +686,13 @@ export default function AdminPage() {
                             {p.hasOverride ? ' · personalizado' : ''}
                             <br />
                             Bs {bs.toFixed(2)} · R$ {brl.toFixed(2)}
+                            <br />
+                            <span style={{ color: profit < 0 ? '#ff6b7a' : profit === 0 ? '#ffd166' : undefined }}>
+                              Ganancia: ${profit.toFixed(2)}
+                              {profit < 0 ? ' ⚠ PÉRDIDA' : profit === 0 ? ' · sin ganancia' : ''}
+                            </span>
+                            <br />
+                            🪙 gana +{earn} · canje {redeem} DC
                           </div>
                         </div>
                         <label style={{ margin: 0 }}>
@@ -716,6 +783,38 @@ export default function AdminPage() {
               Acreditar
             </button>
           </form>
+          <form
+            className="panel"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const r = await fetch('/api/admin/resellers', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({ action: 'credit_dc', id: dcUserId, amount: Number(dcAmt) }),
+              });
+              const d = await r.json();
+              if (!r.ok) setError(d.error);
+              else {
+                setNotice(`DinoCoin actualizado. Nuevo saldo: ${d.user?.dinocoin} DC`);
+                setDcAmt('');
+                refresh();
+              }
+            }}
+          >
+            <h2>🪙 Dar / quitar DinoCoin</h2>
+            <select value={dcUserId} onChange={(e) => setDcUserId(e.target.value)} required>
+              <option value="">Usuario…</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.username} ({u.dinocoin ?? 0} DC)
+                </option>
+              ))}
+            </select>
+            <input type="number" step="1" placeholder="Cantidad (negativa para quitar)" value={dcAmt} onChange={(e) => setDcAmt(e.target.value)} required />
+            <button type="submit" className="btn primary">
+              Aplicar
+            </button>
+          </form>
           {users.map((u) => (
             <div key={u.id} className="admin-card">
               <strong>
@@ -725,6 +824,7 @@ export default function AdminPage() {
                 {u.email} · {u.whatsapp || '—'}
               </div>
               <div className="price-usd">{Number(u.balance_usd).toFixed(4)} USD</div>
+              <div className="muted">🪙 {Number(u.dinocoin || 0).toLocaleString('es-BO')} DinoCoin</div>
             </div>
           ))}
         </div>

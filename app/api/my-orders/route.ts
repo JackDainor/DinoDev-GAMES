@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
       rows = await db`
         SELECT id, status, game_name, item_name, player_id, player_name,
                price_usd::text, local_amount::text, local_currency, pay_method,
-               pay_country, qr_url, created_at, expires_at
+               pay_country, qr_url, created_at, expires_at, dc_cost, dc_earned
         FROM payment_orders
         WHERE id = ANY(${ids}::uuid[])
         ORDER BY created_at DESC
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       const more = await db`
         SELECT id, status, game_name, item_name, player_id, player_name,
                price_usd::text, local_amount::text, local_currency, pay_method,
-               pay_country, qr_url, created_at, expires_at
+               pay_country, qr_url, created_at, expires_at, dc_cost, dc_earned
         FROM payment_orders
         WHERE user_id = ${user.id}::uuid
         ORDER BY created_at DESC
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       const more = await db`
         SELECT id, status, game_name, item_name, player_id, player_name,
                price_usd::text, local_amount::text, local_currency, pay_method,
-               pay_country, qr_url, created_at, expires_at
+               pay_country, qr_url, created_at, expires_at, dc_cost, dc_earned
         FROM payment_orders
         WHERE player_id = ${playerId}
         ORDER BY created_at DESC

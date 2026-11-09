@@ -61,6 +61,7 @@ export type SessionUser = {
   whatsapp: string | null;
   role: string;
   balance_usd: string;
+  dinocoin: number;
   active: boolean;
 };
 
@@ -73,7 +74,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     await ensureSchema();
     const db = sql();
     const rows = await db`
-      SELECT id, email, username, whatsapp, role, balance_usd::text, active
+      SELECT id, email, username, whatsapp, role, balance_usd::text, dinocoin, active
       FROM app_users WHERE id = ${p.userId}::uuid LIMIT 1
     `;
     const u = rows[0];
@@ -85,6 +86,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       whatsapp: u.whatsapp,
       role: u.role,
       balance_usd: u.balance_usd,
+      dinocoin: Number(u.dinocoin || 0),
       active: u.active,
     };
   } catch {

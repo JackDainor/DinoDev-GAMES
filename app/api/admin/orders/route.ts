@@ -3,6 +3,7 @@ import { sql } from '@/lib/db';
 import { ensureSchema } from '@/lib/schema';
 import { s2t, safeError } from '@/lib/shop2topup';
 import { notifyTelegram } from '@/lib/notify';
+import { awardForOrder, refundOrder } from '@/lib/dinocoin';
 
 function authed(req: NextRequest) {
   const secret = process.env.OPERATOR_SECRET || '';
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     const rows = await db`
       SELECT id, status, game_name, item_name, player_id, player_name, region_label,
              cost_usd::text, price_usd::text, local_amount::text, local_currency,
-             pay_method, pay_country, created_at, expires_at, user_id
+             pay_method, pay_country, created_at, expires_at, user_id, dc_cost, dc_earned
       FROM payment_orders
       ORDER BY created_at DESC
       LIMIT 400
@@ -52,11 +53,13 @@ export async function POST(req: NextRequest) {
 
     if (action === 'cancel') {
       await db`UPDATE payment_orders SET status = 'cancelled', updated_at = now() WHERE id = ${id}::uuid`;
-      return NextResponse.json({ success: true, status: 'cancelled' });
+      const refunded = await refundOrder(id);
+      return NextResponse.json({ success: true, status: 'cancelled', dcRefunded: refunded });
     }
 
     if (action === 'not_paid') {
       await db`UPDATE payment_orders SET status = 'not_paid', updated_at = now() WHERE id = ${id}::uuid`;
+      await refundOrder(id).catch(() => 0);
       return NextResponse.json({ success: true, status: 'not_paid' });
     }
 
@@ -77,7 +80,8 @@ export async function POST(req: NextRequest) {
       await notifyTelegram(
         `✅ Completado (externo) #${id.slice(0, 8)}\n${order.game_name || ''} ${order.item_name || ''}\n${order.player_name || order.player_id}`
       );
-      return NextResponse.json({ success: true, status: 'completed', manual: true });
+      const dcManual = await awardForOrder(id).catch(() => 0);
+      return NextResponse.json({ success: true, status: 'completed', manual: true, dcAwarded: dcManual });
     }
 
     if (action === 'fulfill') {
@@ -113,11 +117,22 @@ export async function POST(req: NextRequest) {
             ? `✅ Enviado Shop2TopUp #${id.slice(0, 8)} ${order.game_name || ''} ${order.item_name || ''}`
             : `❌ Falló Shop2TopUp #${id.slice(0, 8)}`
         );
-        return NextResponse.json({ success: true, status: finalStatus, provider: out });
+        let dcAwarded = 0;
+        let dcRefunded = 0;
+        if (finalStatus === 'completed') dcAwarded = await awardForOrder(id).catch(() => 0);
+        else dcRefunded = await refundOrder(id).catch(() => 0);
+        return NextResponse.json({
+          success: true,
+          status: finalStatus,
+          provider: out,
+          dcAwarded,
+          dcRefunded,
+        });
       } catch (e: any) {
         if (b.forceComplete) {
           await db`UPDATE payment_orders SET status = 'completed', updated_at = now() WHERE id = ${id}::uuid`;
-          return NextResponse.json({ success: true, status: 'completed', forced: true });
+          const dcForced = await awardForOrder(id).catch(() => 0);
+          return NextResponse.json({ success: true, status: 'completed', forced: true, dcAwarded: dcForced });
         }
         throw e;
       }

@@ -2,13 +2,13 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'DinoDev GAMES — Recargas',
+  title: 'Dino Games — Recargas',
   description: 'Recargas de juegos online · Bolivia y Brasil',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'DinoDev GAMES',
+    title: 'Dino Games',
   },
   icons: {
     icon: '/logo.png',

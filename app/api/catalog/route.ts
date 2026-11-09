@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { s2t, safeError } from '@/lib/shop2topup';
-import { getSettings, localFromUsd, sellPriceUsd, slugify, type AppSettings } from '@/lib/settings';
+import {
+  DC_DEFAULTS,
+  getSettings,
+  localFromUsd,
+  sellPriceUsd,
+  slugify,
+  type AppSettings,
+} from '@/lib/settings';
+import { dcConfigFrom, dcCost, dcEarn } from '@/lib/dinocoin';
+import { filterRegions, isFreeFire, sortRegions, type AllowedRegion } from '@/lib/regions';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -15,23 +24,13 @@ function listOf(body: any): any[] {
   return [];
 }
 
-function regionLabel(cat: any): string {
-  const n = String(cat.name || '');
-  if (/latam/i.test(n)) return 'LATAM';
-  if (/brazil|brasil/i.test(n)) return 'BR';
-  if (/global|worldwide/i.test(n)) return 'Global';
-  if (/indonesia/i.test(n)) return 'ID';
-  if (/europe|\beu\b/i.test(n)) return 'EU';
-  if (/usa|united states/i.test(n)) return 'US';
-  return n.slice(0, 12) || 'Global';
-}
-
 const DEFAULT_SETTINGS: AppSettings = {
   rateBo: 12,
   rateBr: 5.5,
   markupUsd: 0,
   enabledBigCategoryIds: [],
   priceOverrides: {},
+  ...DC_DEFAULTS,
 };
 
 async function safeSettings(): Promise<AppSettings> {
@@ -42,28 +41,85 @@ async function safeSettings(): Promise<AppSettings> {
   }
 }
 
+/* ───────── cachés en memoria (10 min) para no martillar a Shop2TopUp ───────── */
+const TTL = 10 * 60 * 1000;
+let bigCache: { at: number; data: any[] } | null = null;
+const regionCache = new Map<number, { at: number; allowed: AllowedRegion[]; excluded: string[] }>();
+
+async function getBigCategories(): Promise<any[]> {
+  if (bigCache && Date.now() - bigCache.at < TTL) return bigCache.data;
+  let all = listOf(await s2t('/catalog/big-categories?for_ui=true'));
+  if (!all.length) {
+    try {
+      all = listOf(await s2t('/catalog/big-categories'));
+    } catch {
+      /* */
+    }
+  }
+  bigCache = { at: Date.now(), data: all };
+  return all;
+}
+
+async function bigName(bigId: number): Promise<string> {
+  try {
+    const all = await getBigCategories();
+    const found = all.find((c: any) => Number(c.id) === bigId);
+    return String(found?.name || found?.title || '');
+  } catch {
+    return '';
+  }
+}
+
+/** Regiones permitidas (solo Bolivia / Brasil) para un juego. */
+async function allowedRegions(bigId: number, name?: string) {
+  const hit = regionCache.get(bigId);
+  if (hit && Date.now() - hit.at < TTL) return hit;
+  const gameName = name ?? (await bigName(bigId));
+  const categories = listOf(
+    await s2t(`/catalog/categories?bigCategoryId=${bigId}&for_ui=true`)
+  );
+  const { allowed, excluded } = filterRegions(categories, isFreeFire(gameName, bigId));
+  const entry = { at: Date.now(), allowed, excluded };
+  regionCache.set(bigId, entry);
+  return entry;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
     const settings = await safeSettings();
-    const market = (sp.get('market') || 'BO').toUpperCase();
+    const market = (sp.get('market') || 'BO').toUpperCase() === 'BR' ? 'BR' : 'BO';
+    const dc = dcConfigFrom(settings);
 
+    /* ───────── Lista de juegos ───────── */
     if (sp.get('list') === 'games') {
-      let all = listOf(await s2t('/catalog/big-categories?for_ui=true'));
-      if (!all.length) {
-        try {
-          all = listOf(await s2t('/catalog/big-categories'));
-        } catch {
-          /* */
-        }
-      }
+      let all = await getBigCategories();
 
       const enabled = (settings.enabledBigCategoryIds || []).map(Number);
       if (enabled.length > 0) {
         const allow = new Set(enabled);
         const filtered = all.filter((c: any) => allow.has(Number(c.id)));
-        // Prefer admin selection; only fall back to all if filter is empty by mistake
         all = filtered.length ? filtered : all;
+      }
+
+      // Oculta juegos que no tengan ningún servidor para Bolivia / Brasil
+      // (solo si el admin eligió una lista corta de juegos).
+      if (enabled.length > 0 && all.length <= 15) {
+        const checks = await Promise.all(
+          all.map(async (c: any) => {
+            try {
+              const r = await allowedRegions(
+                Number(c.id),
+                String(c.name || c.title || '')
+              );
+              return r.allowed.length > 0;
+            } catch {
+              return true; // ante duda, no ocultar
+            }
+          })
+        );
+        const kept = all.filter((_: any, i: number) => checks[i]);
+        all = kept.length ? kept : all;
       }
 
       const games = all
@@ -98,37 +154,32 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    /* ───────── Paquetes de un juego ───────── */
     const bigId = Number(sp.get('bigCategoryId') || sp.get('game') || 0);
     const regionId = sp.get('regionId');
     if (!bigId) {
       return NextResponse.json({ error: 'Falta bigCategoryId' }, { status: 400 });
     }
 
-    const categories = listOf(
-      await s2t(`/catalog/categories?bigCategoryId=${bigId}&for_ui=true`)
-    );
-
-    const regions = categories
-      .map((c: any) => {
-        const name = String(c.name || '');
-        const region = regionLabel(c);
-        let score = 0;
-        if (/latam/i.test(name) || region === 'LATAM') score += 100;
-        if (/brazil|brasil/i.test(name) || region === 'BR') score += 50;
-        if (/global/i.test(name) || region === 'Global') score += 20;
-        return { id: Number(c.id), name, region, score };
-      })
-      .filter((r: any) => r.id > 0)
-      .sort((a: any, b: any) => b.score - a.score || a.name.localeCompare(b.name));
-
-    if (!regions.length) {
-      return NextResponse.json({ error: 'Sin regiones para este producto.' }, { status: 404 });
+    const { allowed, excluded } = await allowedRegions(bigId);
+    if (!allowed.length) {
+      return NextResponse.json(
+        {
+          error: 'Este juego no tiene servidores disponibles para Bolivia / Brasil.',
+          ...(sp.get('debug') ? { excluded } : {}),
+        },
+        { status: 404 }
+      );
     }
 
-    let chosen =
-      (regionId ? regions.find((r) => String(r.id) === String(regionId)) : null) ||
-      regions.find((r) => r.region === 'LATAM') ||
-      regions[0];
+    const regions = sortRegions(allowed, market).map((r) => ({
+      id: r.id,
+      name: r.name,
+      region: r.region,
+    }));
+
+    const chosen =
+      (regionId ? regions.find((r) => String(r.id) === String(regionId)) : null) || regions[0];
 
     const pd = await s2t(`/catalog/subcategories?categoryId=${chosen.id}`);
     const raw = listOf(pd)
@@ -175,6 +226,8 @@ export async function GET(req: NextRequest) {
           symbolLocal: local.symbol,
           region: chosen.region,
           regionName: chosen.name,
+          dcEarn: dcEarn(priceUsd, cost, dc),
+          dcCost: dc.enabled ? dcCost(cost, dc) : 0,
         };
       })
     );
@@ -193,7 +246,6 @@ export async function GET(req: NextRequest) {
       /* optional */
     }
 
-    // Heuristic: gift/voucher often only needs username or nothing
     if (!requirements.length) {
       const isGift = products.some((p) =>
         /gift|voucher|card|codigo|code/i.test(p.productType + p.name)
@@ -219,10 +271,12 @@ export async function GET(req: NextRequest) {
           rateBr: settings.rateBr,
           markupUsd: settings.markupUsd,
         },
+        dinocoin: { enabled: dc.enabled },
         category: { id: chosen.id, name: chosen.name, region: chosen.region },
         regions,
         products,
         requirements,
+        ...(sp.get('debug') ? { excluded } : {}),
       },
       { headers: { 'Cache-Control': 'no-store' } }
     );
