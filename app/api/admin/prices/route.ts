@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { s2t, safeError } from '@/lib/shop2topup';
 import { getSettings, setSettings, sellPriceUsd, localFromUsd } from '@/lib/settings';
 import { ensureSchema } from '@/lib/schema';
+import { dcConfigFrom, dcCost, dcEarn } from '@/lib/dinocoin';
+import { filterRegions, isFreeFire } from '@/lib/regions';
 
 function authed(req: NextRequest) {
   const secret = process.env.OPERATOR_SECRET || '';
@@ -28,19 +30,21 @@ export async function GET(req: NextRequest) {
       await s2t(`/catalog/categories?bigCategoryId=${bigId}&for_ui=true`)
     );
 
-    const sorted = categories
-      .map((c: any) => ({
-        id: Number(c.id),
-        name: String(c.name || ''),
-        score: /latam/i.test(String(c.name || ''))
-          ? 100
-          : /brazil|brasil/i.test(String(c.name || ''))
-            ? 50
-            : 0,
-      }))
-      .filter((c) => c.id > 0)
+    // Solo servidores de Bolivia / Brasil (Free Fire: solo LATAM y BR)
+    let bigGameName = '';
+    try {
+      const bc = listOf(await s2t('/catalog/big-categories?for_ui=true'));
+      const f = bc.find((x: any) => Number(x.id) === bigId);
+      bigGameName = String(f?.name || f?.title || '');
+    } catch {
+      /* */
+    }
+    const { allowed } = filterRegions(categories, isFreeFire(bigGameName, bigId));
+    const sorted = allowed
+      .map((c) => ({ id: c.id, name: c.name, score: c.key === 'LATAM' ? 100 : c.key === 'BR' ? 50 : 10 }))
       .sort((a, b) => b.score - a.score);
 
+    const dc = dcConfigFrom(settings);
     const products: any[] = [];
     for (const cat of sorted.slice(0, 3)) {
       const pd = await s2t(`/catalog/subcategories?categoryId=${cat.id}`);
@@ -67,6 +71,8 @@ export async function GET(req: NextRequest) {
           hasOverride: settings.priceOverrides[String(id)] != null,
           bs: bo.amount,
           brl: br.amount,
+          dcEarn: dcEarn(sell, cost, dc),
+          dcCost: dcCost(cost, dc),
         });
       }
     }
@@ -75,6 +81,7 @@ export async function GET(req: NextRequest) {
       success: true,
       rateBo: settings.rateBo,
       rateBr: settings.rateBr,
+      dinocoin: dc,
       products,
     });
   } catch (e) {
@@ -94,6 +101,20 @@ export async function POST(req: NextRequest) {
       await setSettings({
         rateBo: b.rateBo != null ? Number(b.rateBo) : undefined,
         rateBr: b.rateBr != null ? Number(b.rateBr) : undefined,
+      });
+    }
+
+    if (
+      b.dcEnabled != null ||
+      b.dcValueUsd != null ||
+      b.dcEarnShare != null ||
+      b.dcRedeemMarkup != null
+    ) {
+      await setSettings({
+        dcEnabled: b.dcEnabled != null ? Boolean(b.dcEnabled) : undefined,
+        dcValueUsd: b.dcValueUsd != null ? Number(b.dcValueUsd) : undefined,
+        dcEarnShare: b.dcEarnShare != null ? Number(b.dcEarnShare) : undefined,
+        dcRedeemMarkup: b.dcRedeemMarkup != null ? Number(b.dcRedeemMarkup) : undefined,
       });
     }
 
