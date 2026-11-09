@@ -1,7 +1,7 @@
 {
-  "name": "DinoDev GAMES",
-  "short_name": "DinoDev",
-  "description": "Recargas Free Fire, PUBG, MLBB y más. Bolivia y Brasil.",
+  "name": "Dino Games",
+  "short_name": "Dino Games",
+  "description": "Recargas Free Fire y más para Bolivia y Brasil. Gana DinoCoin en cada recarga.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#06140c",
