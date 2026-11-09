@@ -1,0 +1,16 @@
+DINO GAMES v3 — Cómo actualizar
+================================
+1) En tu repo de GitHub copia/reemplaza TODOS los archivos de este zip respetando las carpetas
+   (los nuevos son: lib/regions.ts, lib/dinocoin.ts, app/dinocoin/page.tsx, app/api/dinocoin/route.ts).
+2) BORRA estos 3 archivos del repo (ya no se usan; traían servidores como Indonesia, Vietnam, etc.):
+      lib/games.ts
+      lib/catalog-settings.ts
+      lib/money.ts
+3) Haz commit. Vercel despliega solo. No necesitas variables nuevas.
+4) Neon: las tablas/columnas de DinoCoin se crean solas la primera vez que entra alguien a la web.
+5) Entra a /admin → Precios USD / TC → panel "DinoCoin" para ajustar (valor del DC, % que devuelves, recargo al canjear).
+   Dentro de cada juego ahora ves tu GANANCIA por pack, cuánto GANA el cliente y cuánto cuesta CANJEAR.
+
+Si un servidor no aparece (o aparece uno que no debería):
+   abre  https://TU-DOMINIO/api/catalog?bigCategoryId=ID_DEL_JUEGO&debug=1
+   "regions" = las que se muestran, "excluded" = las ocultas. Las reglas están en lib/regions.ts.
