@@ -59,7 +59,12 @@ export async function POST(req: NextRequest) {
     const qrBr = process.env.QR_URL_BR || process.env.PIX_KEY_BR || null;
     const qrUrl = qrFor(market) || qrBo || qrBr;
 
-    async function insertOrder(status: string, method: string, userId: string | null, dcSpent: number | null) {
+    const insertOrder = async (
+      status: string,
+      method: string,
+      userId: string | null,
+      dcSpent: number | null
+    ): Promise<void> => {
       await db`
         INSERT INTO payment_orders (
           id, status, user_id, game_name, game_slug, item_name, item_id, category_id,
@@ -77,7 +82,7 @@ export async function POST(req: NextRequest) {
           now() + interval '1 hour'
         )
       `;
-    }
+    };
 
     /* ───────── Pago con DinoCoin ───────── */
     if (payMethod === 'dinocoin') {
