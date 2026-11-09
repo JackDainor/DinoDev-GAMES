@@ -9,7 +9,28 @@ export type AppSettings = {
   enabledBigCategoryIds: number[];
   /** itemId (subcategory) -> sell price USD */
   priceOverrides: Record<string, number>;
+  /** DinoCoin */
+  dcEnabled: boolean;
+  /** USD que "vale" 1 DinoCoin (0.01 = 1 centavo) */
+  dcValueUsd: number;
+  /** Fracción de TU ganancia por pedido que se devuelve en DinoCoin (0–1) */
+  dcEarnShare: number;
+  /** Recargo al canjear: el pack cuesta costo × (1 + este valor) en DinoCoin */
+  dcRedeemMarkup: number;
 };
+
+export const DC_DEFAULTS = {
+  dcEnabled: true,
+  dcValueUsd: 0.01,
+  dcEarnShare: 0.5,
+  dcRedeemMarkup: 0.2,
+};
+
+function num(v: unknown, fallback: number, min: number, max: number) {
+  const n = Number(v);
+  if (v === undefined || v === null || v === '' || !Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
 
 export async function getSettings(): Promise<AppSettings> {
   await ensureSchema();
@@ -52,6 +73,10 @@ export async function getSettings(): Promise<AppSettings> {
     markupUsd: Math.max(0, Number(m.markup_usd) || 0),
     enabledBigCategoryIds: enabled,
     priceOverrides,
+    dcEnabled: m.dc_enabled === undefined ? DC_DEFAULTS.dcEnabled : m.dc_enabled !== 'false',
+    dcValueUsd: num(m.dc_value_usd, DC_DEFAULTS.dcValueUsd, 0.001, 1),
+    dcEarnShare: num(m.dc_earn_share, DC_DEFAULTS.dcEarnShare, 0, 1),
+    dcRedeemMarkup: num(m.dc_redeem_markup, DC_DEFAULTS.dcRedeemMarkup, 0, 5),
   };
 }
 
@@ -62,6 +87,10 @@ export async function setSettings(
     markupUsd: number;
     enabledBigCategoryIds: number[];
     priceOverrides: Record<string, number>;
+    dcEnabled: boolean;
+    dcValueUsd: number;
+    dcEarnShare: number;
+    dcRedeemMarkup: number;
   }>
 ) {
   await ensureSchema();
@@ -87,6 +116,18 @@ export async function setSettings(
       .map(Number)
       .filter((n) => Number.isFinite(n) && n > 0);
     await put('enabled_big_category_ids', JSON.stringify(ids));
+  }
+  if (partial.dcEnabled != null) {
+    await put('dc_enabled', partial.dcEnabled ? 'true' : 'false');
+  }
+  if (partial.dcValueUsd != null && Number.isFinite(Number(partial.dcValueUsd))) {
+    await put('dc_value_usd', String(num(partial.dcValueUsd, DC_DEFAULTS.dcValueUsd, 0.001, 1)));
+  }
+  if (partial.dcEarnShare != null && Number.isFinite(Number(partial.dcEarnShare))) {
+    await put('dc_earn_share', String(num(partial.dcEarnShare, DC_DEFAULTS.dcEarnShare, 0, 1)));
+  }
+  if (partial.dcRedeemMarkup != null && Number.isFinite(Number(partial.dcRedeemMarkup))) {
+    await put('dc_redeem_markup', String(num(partial.dcRedeemMarkup, DC_DEFAULTS.dcRedeemMarkup, 0, 5)));
   }
   if (partial.priceOverrides != null) {
     const clean: Record<string, number> = {};

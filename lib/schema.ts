@@ -1,6 +1,19 @@
 import { sql } from '@/lib/db';
 
-export async function ensureSchema() {
+let ready: Promise<void> | null = null;
+
+/** Corre las migraciones una sola vez por instancia (reintenta si falla). */
+export function ensureSchema(): Promise<void> {
+  if (!ready) {
+    ready = runSchema().catch((e) => {
+      ready = null;
+      throw e;
+    });
+  }
+  return ready;
+}
+
+async function runSchema() {
   const db = sql();
 
   await db`
@@ -34,34 +47,6 @@ export async function ensureSchema() {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `;
-
-  const cols = [
-    'user_id uuid',
-    'game_name text',
-    'game_slug text',
-    'item_name text',
-    'item_id integer',
-    'category_id integer',
-    'player_id text',
-    'player_name text',
-    'region_label text',
-    'cost_usd numeric',
-    'price_usd numeric',
-    'local_amount numeric',
-    'local_currency text',
-    'pay_country text',
-    'pay_method text',
-    'qr_url text',
-    'provider_response jsonb',
-    'expires_at timestamptz',
-  ];
-  for (const col of cols) {
-    try {
-      // neon tagged template needs static strings — run one by one below
-    } catch {
-      /* */
-    }
-  }
 
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS user_id uuid`; } catch { /* */ }
   try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS game_name text`; } catch { /* */ }
@@ -138,6 +123,29 @@ export async function ensureSchema() {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `;
+
+
+  // ───────── DinoCoin ─────────
+  try { await db`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS dinocoin integer NOT NULL DEFAULT 0`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS dc_cost integer`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS dc_earned integer`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS dc_awarded boolean NOT NULL DEFAULT false`; } catch { /* */ }
+  try { await db`ALTER TABLE payment_orders ADD COLUMN IF NOT EXISTS dc_refunded boolean NOT NULL DEFAULT false`; } catch { /* */ }
+
+  await db`
+    CREATE TABLE IF NOT EXISTS dinocoin_ledger (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id uuid NOT NULL,
+      amount integer NOT NULL,
+      kind text NOT NULL,
+      order_id uuid,
+      note text,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+  try {
+    await db`CREATE UNIQUE INDEX IF NOT EXISTS dinocoin_ledger_order_kind ON dinocoin_ledger (order_id, kind) WHERE order_id IS NOT NULL`;
+  } catch { /* */ }
 
   await db`INSERT INTO app_settings (key, value) VALUES ('rate_bo', '12') ON CONFLICT (key) DO NOTHING`;
   await db`INSERT INTO app_settings (key, value) VALUES ('rate_br', '5.5') ON CONFLICT (key) DO NOTHING`;
