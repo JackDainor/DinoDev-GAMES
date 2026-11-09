@@ -102,6 +102,7 @@ export default function BilleteraPage() {
       <p style={{ display: 'flex', gap: 12 }}>
         <a href="/">← Tienda</a>
         <a href="/cuenta">Mi cuenta</a>
+        <a href="/dinocoin">🪙 DinoCoin</a>
       </p>
       <h1>Mi billetera</h1>
 
