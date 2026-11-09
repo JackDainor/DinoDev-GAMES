@@ -39,7 +39,7 @@ export async function GET(
     const rows = await db`
       SELECT id, status, game_name, item_name, player_id, player_name,
              price_usd::text, local_amount::text, local_currency, pay_method,
-             pay_country, qr_url, created_at, expires_at
+             pay_country, qr_url, created_at, expires_at, dc_cost
       FROM payment_orders WHERE id = ${params.id}::uuid LIMIT 1
     `;
     if (!rows[0]) return NextResponse.json({ error: 'Orden no encontrada' }, { status: 404 });
